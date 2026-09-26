@@ -17,11 +17,13 @@ import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type ContentBrief = {
+  campaignId?: string;
   title: string;
   brief: string;
   language: string;
   contentType: string;
   platforms: string[];
+  createdAt?: string;
 };
 
 type PlatformContent = {
@@ -46,6 +48,7 @@ type PlatformVisual = {
 
 type ScheduledPost = {
   id: string;
+  campaignId?: string;
   campaignTitle: string;
   platform: string;
   headline: string;
@@ -102,12 +105,16 @@ function generatePostId(platform: string) {
   return `${prefix}-${Date.now().toString(36).toUpperCase()}-${randomPart}`;
 }
 
-/*
- * Mock platform adapters.
- *
- * These simulate the kind of validation that a real social-platform
- * publishing adapter would perform before accepting a post.
- */
+function generateCampaignId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `campaign-${Date.now()}-${Math.random()
+    .toString(36)
+    .substring(2, 10)}`;
+}
+
 function validateForPlatform(
   content: PlatformContent,
   visual: PlatformVisual | undefined,
@@ -246,19 +253,16 @@ export default function PublishPage() {
 
   const [approved, setApproved] = useState(false);
   const [publishing, setPublishing] = useState(false);
+  const [bulkPublishing, setBulkPublishing] = useState(false);
 
   const [message, setMessage] = useState("");
   const [messageType, setMessageType] = useState<"success" | "error" | "">("");
 
   useEffect(() => {
     const savedBrief = localStorage.getItem("hoichoi-content-brief");
-
     const savedContents = localStorage.getItem("hoichoi-generated-contents");
-
     const savedVisuals = localStorage.getItem("hoichoi-generated-visuals");
-
     const savedApproval = localStorage.getItem("hoichoi-content-approved");
-
     const savedPosts = localStorage.getItem("hoichoi-scheduled-posts");
 
     if (!savedBrief || !savedContents || !savedVisuals) {
@@ -268,10 +272,17 @@ export default function PublishPage() {
 
     try {
       const parsedBrief = JSON.parse(savedBrief) as ContentBrief;
-
       const parsedContents = JSON.parse(savedContents) as PlatformContent[];
-
       const parsedVisuals = JSON.parse(savedVisuals) as PlatformVisual[];
+
+      if (!parsedBrief.campaignId) {
+        parsedBrief.campaignId = generateCampaignId();
+
+        localStorage.setItem(
+          "hoichoi-content-brief",
+          JSON.stringify(parsedBrief),
+        );
+      }
 
       setBrief(parsedBrief);
       setContents(parsedContents);
@@ -370,13 +381,11 @@ export default function PublishPage() {
     setPublishing(true);
     setMessage("");
 
-    /*
-     * Simulate a real adapter/API call.
-     */
     await new Promise((resolve) => setTimeout(resolve, 900));
 
     const post: ScheduledPost = {
       id: generatePostId(activePlatform),
+      campaignId: brief?.campaignId,
       campaignTitle: brief?.title ?? "Untitled Campaign",
       platform: activePlatform,
       headline: currentContent.headline,
@@ -394,6 +403,172 @@ export default function PublishPage() {
     );
 
     setMessageType("success");
+  }
+
+  function getPlatformItems() {
+    return (
+      brief?.platforms
+        ?.map((platform) => ({
+          platform,
+          content: contents.find((item) => item.platform === platform),
+          visual: visuals.find((item) => item.platform === platform),
+        }))
+        .filter(
+          (
+            item,
+          ): item is {
+            platform: string;
+            content: PlatformContent;
+            visual: PlatformVisual;
+          } => Boolean(item.content && item.visual),
+        ) ?? []
+    );
+  }
+
+  async function handleScheduleAll() {
+    if (!approved) {
+      setMessage(
+        "Publishing is blocked because this campaign has not been approved.",
+      );
+      setMessageType("error");
+      return;
+    }
+
+    if (!scheduleDate || !scheduleTime) {
+      setMessage("Select both a schedule date and time.");
+      setMessageType("error");
+      return;
+    }
+
+    const scheduledAt = new Date(`${scheduleDate}T${scheduleTime}`);
+
+    if (Number.isNaN(scheduledAt.getTime())) {
+      setMessage("Invalid schedule date or time.");
+      setMessageType("error");
+      return;
+    }
+
+    if (scheduledAt.getTime() <= Date.now()) {
+      setMessage("The scheduled time must be in the future.");
+      setMessageType("error");
+      return;
+    }
+
+    const items = getPlatformItems();
+
+    if (items.length === 0) {
+      setMessage("No generated platform content is available.");
+      setMessageType("error");
+      return;
+    }
+
+    const rejected = items.filter(
+      (item) => !validateForPlatform(item.content, item.visual).valid,
+    );
+
+    if (rejected.length > 0) {
+      setMessage(
+        `Platform validation failed for: ${rejected
+          .map((item) => item.platform)
+          .join(", ")}.`,
+      );
+      setMessageType("error");
+      return;
+    }
+
+    setBulkPublishing(true);
+    setPublishing(true);
+    setMessage("");
+
+    await new Promise((resolve) => setTimeout(resolve, 900));
+
+    const now = new Date().toISOString();
+
+    const posts: ScheduledPost[] = items.map((item) => ({
+      id: generatePostId(item.platform),
+      campaignId: brief?.campaignId,
+      campaignTitle: brief?.title ?? "Untitled Campaign",
+      platform: item.platform,
+      headline: item.content.headline,
+      scheduledAt: scheduledAt.toISOString(),
+      status: "scheduled",
+      createdAt: now,
+    }));
+
+    savePosts([...posts, ...scheduledPosts]);
+
+    setBulkPublishing(false);
+    setPublishing(false);
+
+    setMessage(
+      `${posts.length} platform posts scheduled successfully: ${posts
+        .map((post) => `${post.platform} (${post.id})`)
+        .join(" â€¢ ")}`,
+    );
+    setMessageType("success");
+  }
+
+  function handleMockPublishAll() {
+    if (!approved) {
+      setMessage(
+        "Publishing is blocked because this campaign has not been approved.",
+      );
+      setMessageType("error");
+      return;
+    }
+
+    const items = getPlatformItems();
+
+    if (items.length === 0) {
+      setMessage("No generated platform content is available.");
+      setMessageType("error");
+      return;
+    }
+
+    const rejected = items.filter(
+      (item) => !validateForPlatform(item.content, item.visual).valid,
+    );
+
+    if (rejected.length > 0) {
+      setMessage(
+        `Platform validation failed for: ${rejected
+          .map((item) => item.platform)
+          .join(", ")}.`,
+      );
+      setMessageType("error");
+      return;
+    }
+
+    setBulkPublishing(true);
+    setPublishing(true);
+    setMessage("");
+
+    setTimeout(() => {
+      const now = new Date().toISOString();
+
+      const posts: ScheduledPost[] = items.map((item) => ({
+        id: generatePostId(item.platform),
+        campaignId: brief?.campaignId,
+        campaignTitle: brief?.title ?? "Untitled Campaign",
+        platform: item.platform,
+        headline: item.content.headline,
+        scheduledAt: now,
+        status: "published",
+        createdAt: now,
+      }));
+
+      savePosts([...posts, ...scheduledPosts]);
+
+      setBulkPublishing(false);
+      setPublishing(false);
+
+      setMessage(
+        `${posts.length} platform posts published successfully: ${posts
+          .map((post) => `${post.platform} (${post.id})`)
+          .join(" â€¢ ")}`,
+      );
+      setMessageType("success");
+    }, 900);
   }
 
   function handleMockPublishNow() {
@@ -423,14 +598,17 @@ export default function PublishPage() {
     setMessage("");
 
     setTimeout(() => {
+      const now = new Date().toISOString();
+
       const post: ScheduledPost = {
         id: generatePostId(activePlatform),
+        campaignId: brief?.campaignId,
         campaignTitle: brief?.title ?? "Untitled Campaign",
         platform: activePlatform,
         headline: currentContent.headline,
-        scheduledAt: new Date().toISOString(),
+        scheduledAt: now,
         status: "published",
-        createdAt: new Date().toISOString(),
+        createdAt: now,
       };
 
       savePosts([post, ...scheduledPosts]);
@@ -452,7 +630,6 @@ export default function PublishPage() {
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 lg:px-8">
-        {/* HEADER */}
         <header className="mb-8 flex flex-col gap-5 border-b border-border pb-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -497,7 +674,6 @@ export default function PublishPage() {
           </div>
         </header>
 
-        {/* STATUS MESSAGE */}
         {message && (
           <div
             className={`mb-6 flex items-start gap-3 rounded-xl border px-4 py-3 text-sm ${
@@ -516,7 +692,6 @@ export default function PublishPage() {
           </div>
         )}
 
-        {/* APPROVAL GATE */}
         <section className="mb-6 rounded-2xl border border-border bg-card p-5">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-muted">
@@ -548,7 +723,6 @@ export default function PublishPage() {
           </div>
         </section>
 
-        {/* PLATFORM SELECTOR */}
         <section className="mb-6">
           <div className="flex flex-wrap gap-2">
             {brief.platforms.map((platform) => {
@@ -579,9 +753,7 @@ export default function PublishPage() {
           </div>
         </section>
 
-        {/* PUBLISHER */}
         <section className="grid gap-6 lg:grid-cols-[1fr_0.9fr]">
-          {/* CONTENT PREVIEW */}
           <div className="rounded-2xl border border-border bg-card p-5">
             <div className="mb-6 flex items-center justify-between">
               <div>
@@ -649,9 +821,7 @@ export default function PublishPage() {
             )}
           </div>
 
-          {/* ADAPTER + SCHEDULER */}
           <div className="space-y-6">
-            {/* ADAPTER VALIDATION */}
             <div className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-5 flex items-center justify-between">
                 <div>
@@ -719,7 +889,6 @@ export default function PublishPage() {
               )}
             </div>
 
-            {/* SCHEDULER */}
             <div className="rounded-2xl border border-border bg-card p-5">
               <div className="mb-5">
                 <p className="text-sm font-semibold">Schedule post</p>
@@ -794,18 +963,75 @@ export default function PublishPage() {
                 disabled={publishing || !approved || !validation.valid}
                 className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-xl border border-border bg-card px-4 text-sm font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {publishing ? (
+                {publishing && !bulkPublishing ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
                   <Send className="h-4 w-4" />
                 )}
                 Mock publish now
               </button>
+
+              <div className="mt-4 rounded-xl border border-border bg-muted/20 p-4">
+                <div className="flex items-start gap-3">
+                  <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-background">
+                    <Globe className="h-4 w-4" />
+                  </div>
+
+                  <div>
+                    <p className="text-sm font-semibold">
+                      Multi-platform command
+                    </p>
+                    <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                      Publish the approved campaign to every selected platform
+                      using each platform&apos;s generated content and
+                      validation.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {brief.platforms.map((platform) => (
+                    <span
+                      key={platform}
+                      className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium"
+                    >
+                      {platform}
+                    </span>
+                  ))}
+                </div>
+
+                <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                  <button
+                    onClick={handleScheduleAll}
+                    disabled={publishing || !approved}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-foreground px-3 text-xs font-medium text-background transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {bulkPublishing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Clock3 className="h-4 w-4" />
+                    )}
+                    Schedule all platforms
+                  </button>
+
+                  <button
+                    onClick={handleMockPublishAll}
+                    disabled={publishing || !approved}
+                    className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-border bg-card px-3 text-xs font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    {bulkPublishing ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    Mock publish all
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         </section>
 
-        {/* POST QUEUE */}
         <section className="mt-6 rounded-2xl border border-border bg-card p-5">
           <div className="mb-5 flex items-center justify-between">
             <div>
@@ -817,7 +1043,15 @@ export default function PublishPage() {
             </div>
 
             <span className="rounded-full border border-border px-2.5 py-1 text-xs">
-              {scheduledPosts.length} posts
+              {
+                scheduledPosts.filter(
+                  (post) =>
+                    !brief.campaignId ||
+                    post.campaignId === brief.campaignId ||
+                    post.campaignTitle === brief.title,
+                ).length
+              }{" "}
+              posts
             </span>
           </div>
 
@@ -832,42 +1066,49 @@ export default function PublishPage() {
             </div>
           ) : (
             <div className="space-y-2">
-              {scheduledPosts.map((post) => (
-                <div
-                  key={post.id}
-                  className="flex flex-col gap-3 rounded-xl border border-border p-4 md:flex-row md:items-center md:justify-between"
-                >
-                  <div className="flex items-start gap-3">
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
-                      {platformConfig[post.platform]?.icon ?? (
-                        <Globe className="h-4 w-4" />
-                      )}
-                    </div>
+              {scheduledPosts
+                .filter(
+                  (post) =>
+                    !brief.campaignId ||
+                    post.campaignId === brief.campaignId ||
+                    post.campaignTitle === brief.title,
+                )
+                .map((post) => (
+                  <div
+                    key={post.id}
+                    className="flex flex-col gap-3 rounded-xl border border-border p-4 md:flex-row md:items-center md:justify-between"
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-muted">
+                        {platformConfig[post.platform]?.icon ?? (
+                          <Globe className="h-4 w-4" />
+                        )}
+                      </div>
 
-                    <div>
-                      <p className="text-sm font-medium">{post.headline}</p>
+                      <div>
+                        <p className="text-sm font-medium">{post.headline}</p>
 
-                      <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
-                        <span>{post.platform}</span>
+                        <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+                          <span>{post.platform}</span>
 
-                        <span>Post ID: {post.id}</span>
+                          <span>Post ID: {post.id}</span>
 
-                        <span>{formatDateTime(post.scheduledAt)}</span>
+                          <span>{formatDateTime(post.scheduledAt)}</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
 
-                  <span
-                    className={`inline-flex w-fit items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
-                      post.status === "published"
-                        ? "bg-emerald-500/10 text-emerald-600"
-                        : "bg-blue-500/10 text-blue-600"
-                    }`}
-                  >
-                    {post.status === "published" ? "PUBLISHED" : "SCHEDULED"}
-                  </span>
-                </div>
-              ))}
+                    <span
+                      className={`inline-flex w-fit items-center rounded-full px-2.5 py-1 text-[10px] font-medium ${
+                        post.status === "published"
+                          ? "bg-emerald-500/10 text-emerald-600"
+                          : "bg-blue-500/10 text-blue-600"
+                      }`}
+                    >
+                      {post.status === "published" ? "PUBLISHED" : "SCHEDULED"}
+                    </span>
+                  </div>
+                ))}
             </div>
           )}
         </section>

@@ -20,8 +20,18 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
+type ContentBrief = {
+  campaignId?: string;
+  title: string;
+  brief: string;
+  language: string;
+  objective: string;
+  platforms: string[];
+};
+
 type ScheduledPost = {
   id: string;
+  campaignId?: string;
   campaignTitle: string;
   platform: string;
   headline: string;
@@ -32,6 +42,7 @@ type ScheduledPost = {
 
 type AnalyticsRecord = {
   postId: string;
+  campaignId?: string;
   platform: string;
   impressions: number;
   reach: number;
@@ -72,13 +83,18 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat("en-IN").format(value);
 }
 
+function generateCampaignId() {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `campaign-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function createMockAnalytics(post: ScheduledPost): AnalyticsRecord {
-  /*
-   * Generate deterministic metrics from the Post ID.
-   *
-   * This means refreshing the page will not randomly change
-   * the numbers for the same post.
-   */
   const seed = Array.from(post.id).reduce(
     (total, character) => total + character.charCodeAt(0),
     0,
@@ -115,6 +131,7 @@ function createMockAnalytics(post: ScheduledPost): AnalyticsRecord {
 
   return {
     postId: post.id,
+    campaignId: post.campaignId,
     platform: post.platform,
     impressions,
     reach,
@@ -132,28 +149,107 @@ function createMockAnalytics(post: ScheduledPost): AnalyticsRecord {
 export default function AnalyticsPage() {
   const router = useRouter();
 
+  const [campaignTitle, setCampaignTitle] = useState("");
+
+  const [campaignId, setCampaignId] = useState("");
+
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
+
   const [analytics, setAnalytics] = useState<AnalyticsRecord[]>([]);
 
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const savedPosts = localStorage.getItem("hoichoi-scheduled-posts");
-
-    if (!savedPosts) {
-      setLoading(false);
-      return;
-    }
-
     try {
-      const parsedPosts = JSON.parse(savedPosts) as ScheduledPost[];
+      const briefRaw = localStorage.getItem("hoichoi-content-brief");
 
-      if (!Array.isArray(parsedPosts)) {
+      let currentBrief: ContentBrief | null = null;
+
+      if (briefRaw) {
+        try {
+          currentBrief = JSON.parse(briefRaw) as ContentBrief;
+        } catch {
+          currentBrief = null;
+        }
+      }
+
+      if (!currentBrief) {
+        setPosts([]);
+        setAnalytics([]);
         setLoading(false);
         return;
       }
 
-      setPosts(parsedPosts);
+      let currentCampaignId = currentBrief.campaignId;
+
+      if (!currentCampaignId) {
+        currentCampaignId = generateCampaignId();
+
+        currentBrief = {
+          ...currentBrief,
+          campaignId: currentCampaignId,
+        };
+
+        localStorage.setItem(
+          "hoichoi-content-brief",
+          JSON.stringify(currentBrief),
+        );
+      }
+
+      setCampaignId(currentCampaignId);
+
+      setCampaignTitle(currentBrief.title);
+
+      const savedPosts = localStorage.getItem("hoichoi-scheduled-posts");
+
+      let parsedPosts: ScheduledPost[] = [];
+
+      if (savedPosts) {
+        try {
+          const candidatePosts = JSON.parse(savedPosts);
+
+          if (Array.isArray(candidatePosts)) {
+            parsedPosts = candidatePosts;
+          }
+        } catch {
+          parsedPosts = [];
+        }
+      }
+
+      /*
+       * Migration for posts created before campaignId was introduced.
+       *
+       * Only legacy posts with the current campaign title are associated
+       * with the current campaign. Other historical campaigns remain
+       * untouched and are excluded from this campaign.
+       */
+      let postsChanged = false;
+
+      const migratedPosts = parsedPosts.map((post) => {
+        if (!post.campaignId && post.campaignTitle === currentBrief?.title) {
+          postsChanged = true;
+
+          return {
+            ...post,
+            campaignId: currentCampaignId,
+          };
+        }
+
+        return post;
+      });
+
+      if (postsChanged) {
+        localStorage.setItem(
+          "hoichoi-scheduled-posts",
+          JSON.stringify(migratedPosts),
+        );
+      }
+
+      const currentPosts = migratedPosts.filter(
+        (post) => post.campaignId === currentCampaignId,
+      );
+
+      setPosts(currentPosts);
 
       const savedAnalytics = localStorage.getItem("hoichoi-analytics");
 
@@ -161,9 +257,7 @@ export default function AnalyticsPage() {
 
       if (savedAnalytics) {
         try {
-          const parsedAnalytics = JSON.parse(
-            savedAnalytics,
-          ) as AnalyticsRecord[];
+          const parsedAnalytics = JSON.parse(savedAnalytics);
 
           if (Array.isArray(parsedAnalytics)) {
             existingAnalytics = parsedAnalytics;
@@ -173,26 +267,51 @@ export default function AnalyticsPage() {
         }
       }
 
-      const existingByPostId = new Map(
-        existingAnalytics.map((item) => [item.postId, item]),
-      );
+      const postsById = new Map(migratedPosts.map((post) => [post.id, post]));
 
-      const mergedAnalytics = parsedPosts.map((post) => {
-        const existing = existingByPostId.get(post.id);
+      /*
+       * Preserve historical analytics while backfilling campaignId
+       * from their corresponding scheduled post.
+       */
+      const migratedAnalytics = existingAnalytics.map((item) => {
+        const matchingPost = postsById.get(item.postId);
 
-        if (existing) {
-          return existing;
+        if (!item.campaignId && matchingPost?.campaignId) {
+          return {
+            ...item,
+            campaignId: matchingPost.campaignId,
+          };
         }
 
-        return createMockAnalytics(post);
+        return item;
       });
 
-      setAnalytics(mergedAnalytics);
+      const analyticsByPostId = new Map(
+        migratedAnalytics.map((item) => [item.postId, item]),
+      );
+
+      /*
+       * Generate analytics only for posts that do not already have
+       * an analytics record.
+       */
+      for (const post of migratedPosts) {
+        if (!analyticsByPostId.has(post.id)) {
+          analyticsByPostId.set(post.id, createMockAnalytics(post));
+        }
+      }
+
+      const mergedAnalytics = Array.from(analyticsByPostId.values());
 
       localStorage.setItem(
         "hoichoi-analytics",
         JSON.stringify(mergedAnalytics),
       );
+
+      const currentAnalytics = mergedAnalytics.filter(
+        (item) => item.campaignId === currentCampaignId,
+      );
+
+      setAnalytics(currentAnalytics);
     } catch {
       setPosts([]);
       setAnalytics([]);
@@ -292,21 +411,69 @@ export default function AnalyticsPage() {
   }, [analytics]);
 
   const topPlatform = useMemo(() => {
-    if (platformComparison.length === 0) {
+    if (analytics.length === 0) {
       return null;
     }
 
-    return [...platformComparison].sort(
-      (a, b) => b.engagementRate - a.engagementRate,
-    )[0];
-  }, [platformComparison]);
+    return [...platformComparison]
+      .filter((item) => item.posts > 0)
+      .sort((a, b) => b.engagementRate - a.engagementRate)[0];
+  }, [analytics.length, platformComparison]);
 
   function refreshAnalytics() {
-    const updated = posts.map((post) => createMockAnalytics(post));
+    if (!campaignId) {
+      return;
+    }
 
-    setAnalytics(updated);
+    const allPostsRaw = localStorage.getItem("hoichoi-scheduled-posts");
+
+    let allPosts: ScheduledPost[] = [];
+
+    if (allPostsRaw) {
+      try {
+        const parsed = JSON.parse(allPostsRaw);
+
+        if (Array.isArray(parsed)) {
+          allPosts = parsed;
+        }
+      } catch {
+        allPosts = [];
+      }
+    }
+
+    const refreshedCampaignAnalytics = allPosts
+      .filter((post) => post.campaignId === campaignId)
+      .map((post) => createMockAnalytics(post));
+
+    const existingAnalyticsRaw = localStorage.getItem("hoichoi-analytics");
+
+    let existingAnalytics: AnalyticsRecord[] = [];
+
+    if (existingAnalyticsRaw) {
+      try {
+        const parsed = JSON.parse(existingAnalyticsRaw);
+
+        if (Array.isArray(parsed)) {
+          existingAnalytics = parsed;
+        }
+      } catch {
+        existingAnalytics = [];
+      }
+    }
+
+    const currentPostIds = new Set(
+      refreshedCampaignAnalytics.map((item) => item.postId),
+    );
+
+    const historicalAnalytics = existingAnalytics.filter(
+      (item) => !currentPostIds.has(item.postId),
+    );
+
+    const updated = [...historicalAnalytics, ...refreshedCampaignAnalytics];
 
     localStorage.setItem("hoichoi-analytics", JSON.stringify(updated));
+
+    setAnalytics(refreshedCampaignAnalytics);
   }
 
   if (loading) {
@@ -324,7 +491,6 @@ export default function AnalyticsPage() {
   return (
     <main className="min-h-screen bg-background">
       <div className="mx-auto max-w-7xl px-4 py-6 md:px-6 lg:px-8">
-        {/* HEADER */}
         <header className="mb-8 flex flex-col gap-5 border-b border-border pb-6 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <button
@@ -347,28 +513,36 @@ export default function AnalyticsPage() {
               <h1 className="mt-1 text-xl font-semibold">
                 Cross-platform performance
               </h1>
+
+              {campaignTitle && (
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Campaign: {campaignTitle}
+                </p>
+              )}
             </div>
           </div>
 
           <button
             onClick={refreshAnalytics}
-            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium transition hover:bg-muted"
+            disabled={!campaignId}
+            className="inline-flex h-9 items-center gap-2 rounded-lg border border-border bg-card px-3 text-sm font-medium transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
           >
             <RefreshCw className="h-4 w-4" />
             Refresh metrics
           </button>
         </header>
 
-        {/* EMPTY STATE */}
         {posts.length === 0 ? (
           <section className="rounded-2xl border border-dashed border-border p-12 text-center">
             <BarChart3 className="mx-auto h-8 w-8 text-muted-foreground" />
 
-            <h2 className="mt-4 text-lg font-semibold">No analytics yet</h2>
+            <h2 className="mt-4 text-lg font-semibold">
+              No analytics for this campaign yet
+            </h2>
 
             <p className="mx-auto mt-2 max-w-md text-sm leading-6 text-muted-foreground">
-              Publish or schedule a campaign from the Publisher to create Post
-              IDs and populate the Analytics Store.
+              Publish or schedule a post for this campaign from the Publisher to
+              populate the Analytics Store.
             </p>
 
             <button
@@ -380,7 +554,6 @@ export default function AnalyticsPage() {
           </section>
         ) : (
           <>
-            {/* SUMMARY CARDS */}
             <section className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
               <MetricCard
                 icon={<Eye className="h-4 w-4" />}
@@ -407,7 +580,6 @@ export default function AnalyticsPage() {
               />
             </section>
 
-            {/* SECONDARY METRICS */}
             <section className="mt-4 grid gap-4 sm:grid-cols-3">
               <MetricCard
                 icon={<MessageCircle className="h-4 w-4" />}
@@ -428,7 +600,6 @@ export default function AnalyticsPage() {
               />
             </section>
 
-            {/* INSIGHT */}
             {topPlatform && (
               <section className="mt-6 rounded-2xl border border-border bg-card p-5">
                 <div className="flex items-start gap-3">
@@ -446,7 +617,7 @@ export default function AnalyticsPage() {
                       <strong className="font-semibold text-foreground">
                         {topPlatform.engagementRate}%
                       </strong>{" "}
-                      across its tracked posts.
+                      across its tracked posts in this campaign.
                     </p>
 
                     <p className="mt-2 text-xs text-muted-foreground">
@@ -458,7 +629,6 @@ export default function AnalyticsPage() {
               </section>
             )}
 
-            {/* PLATFORM COMPARISON */}
             <section className="mt-6 rounded-2xl border border-border bg-card p-5">
               <div className="mb-5">
                 <p className="text-sm font-semibold">
@@ -475,15 +645,10 @@ export default function AnalyticsPage() {
                   <thead>
                     <tr className="border-b border-border text-left text-xs text-muted-foreground">
                       <th className="pb-3 pr-4 font-medium">Platform</th>
-
                       <th className="pb-3 pr-4 font-medium">Posts</th>
-
                       <th className="pb-3 pr-4 font-medium">Impressions</th>
-
                       <th className="pb-3 pr-4 font-medium">Reach</th>
-
                       <th className="pb-3 pr-4 font-medium">Engagement</th>
-
                       <th className="pb-3 font-medium">CTR</th>
                     </tr>
                   </thead>
@@ -528,7 +693,6 @@ export default function AnalyticsPage() {
               </div>
             </section>
 
-            {/* POST LEVEL ANALYTICS */}
             <section className="mt-6 rounded-2xl border border-border bg-card p-5">
               <div className="mb-5">
                 <p className="text-sm font-semibold">Post-level analytics</p>

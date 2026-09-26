@@ -15,6 +15,61 @@ type NextBrief = {
   suggestedHook: string;
 };
 
+type Campaign = {
+  campaignId: string;
+  title: string;
+  brief: string;
+  language: string;
+  contentType: ContentType;
+  platforms: Platform[];
+  createdAt: string;
+};
+
+const CAMPAIGNS_STORAGE_KEY = "hoichoi-campaigns";
+const CURRENT_BRIEF_KEY = "hoichoi-content-brief";
+
+function generateCampaignId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
+
+  return `campaign-${Date.now()}-${Math.random()
+    .toString(36)
+    .substring(2, 10)}`;
+}
+
+function saveCampaignToManager(campaign: Campaign) {
+  try {
+    const raw = localStorage.getItem(CAMPAIGNS_STORAGE_KEY);
+
+    const existing: Campaign[] = raw ? JSON.parse(raw) : [];
+
+    const campaigns = Array.isArray(existing)
+      ? existing.filter(
+          (item) =>
+            item &&
+            typeof item === "object" &&
+            typeof item.campaignId === "string",
+        )
+      : [];
+
+    const withoutDuplicate = campaigns.filter(
+      (item) => item.campaignId !== campaign.campaignId,
+    );
+
+    localStorage.setItem(
+      CAMPAIGNS_STORAGE_KEY,
+      JSON.stringify([campaign, ...withoutDuplicate]),
+    );
+  } catch {
+    /*
+     * Campaign creation should still work even if an old malformed
+     * campaign-manager value exists in localStorage.
+     */
+    localStorage.setItem(CAMPAIGNS_STORAGE_KEY, JSON.stringify([campaign]));
+  }
+}
+
 function CreateCampaignForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -23,11 +78,13 @@ function CreateCampaignForm() {
   const [brief, setBrief] = useState("");
   const [language, setLanguage] = useState("Bengali");
   const [contentType, setContentType] = useState<ContentType>("Show Launch");
+
   const [platforms, setPlatforms] = useState<Platform[]>([
     "Instagram",
     "YouTube",
     "Facebook",
   ]);
+
   const [fromReport, setFromReport] = useState(false);
   const [error, setError] = useState("");
 
@@ -135,7 +192,8 @@ function CreateCampaignForm() {
       return;
     }
 
-    const campaign = {
+    const campaign: Campaign = {
+      campaignId: generateCampaignId(),
       title: title.trim(),
       brief: brief.trim(),
       language,
@@ -144,13 +202,38 @@ function CreateCampaignForm() {
       createdAt: new Date().toISOString(),
     };
 
-    localStorage.setItem("hoichoi-content-brief", JSON.stringify(campaign));
+    /*
+     * Save this campaign to the campaign manager.
+     */
+    saveCampaignToManager(campaign);
 
+    /*
+     * Make this campaign the currently active campaign.
+     */
+    localStorage.setItem(CURRENT_BRIEF_KEY, JSON.stringify(campaign));
+
+    /*
+     * Generated assets are campaign-specific.
+     * Clear anything from the previously active campaign.
+     */
     localStorage.removeItem("hoichoi-generated-contents");
     localStorage.removeItem("hoichoi-generated-visuals");
     localStorage.removeItem("hoichoi-generated-for-brief");
     localStorage.removeItem("hoichoi-content-approved");
     localStorage.removeItem("hoichoi-content-approved-at");
+
+    /*
+     * A report belongs to a particular campaign.
+     * Do not carry an old report into the newly created campaign.
+     */
+    localStorage.removeItem("hoichoi-weekly-report");
+
+    /*
+     * The report → next brief feedback has now been consumed.
+     */
+    localStorage.removeItem("hoichoi-next-brief-insights");
+
+    window.dispatchEvent(new Event("hoichoi-campaign-changed"));
 
     router.push("/studio");
   };
@@ -204,7 +287,7 @@ function CreateCampaignForm() {
               id="title"
               value={title}
               onChange={(event) => setTitle(event.target.value)}
-              placeholder="e.g. Kobita — New Show Launch"
+              placeholder="e.g. New Show Launch"
               className="w-full rounded-lg border bg-background px-4 py-3 text-sm outline-none transition focus:border-primary focus:ring-2 focus:ring-primary/20"
             />
           </div>

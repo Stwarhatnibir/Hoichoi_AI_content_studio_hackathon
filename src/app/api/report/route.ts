@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 
 type AnalyticsRecord = {
   postId: string;
+  campaignId?: string;
   platform: string;
   impressions: number;
   reach: number;
@@ -13,17 +14,40 @@ type AnalyticsRecord = {
   saves: number;
   engagementRate: number;
   clickThroughRate: number;
-  updatedAt: string;
+  updatedAt?: string;
 };
 
 type ScheduledPost = {
   id: string;
+  campaignId?: string;
   campaignTitle: string;
   platform: string;
   headline: string;
   scheduledAt: string;
   status: "scheduled" | "published";
-  createdAt: string;
+  createdAt?: string;
+};
+
+type ReportInsight = {
+  insight: string;
+  evidencePostIds: string[];
+  metrics: Record<string, number | string>;
+};
+
+type PlatformInsight = {
+  platform: string;
+  insight: string;
+  evidencePostIds: string[];
+};
+
+type ParsedReport = {
+  keyInsights?: ReportInsight[];
+  platformInsights?: PlatformInsight[];
+  nextBrief?: {
+    platformFocus?: string | string[];
+  };
+  campaignId?: string;
+  [key: string]: unknown;
 };
 
 const ai = new GoogleGenAI({
@@ -40,8 +64,10 @@ const responseSchema = {
 
     keyInsights: {
       type: Type.ARRAY,
+
       items: {
         type: Type.OBJECT,
+
         properties: {
           insight: {
             type: Type.STRING,
@@ -49,13 +75,54 @@ const responseSchema = {
 
           evidencePostIds: {
             type: Type.ARRAY,
+
             items: {
               type: Type.STRING,
             },
           },
 
           metrics: {
-            type: Type.STRING,
+            type: Type.OBJECT,
+
+            properties: {
+              impressions: {
+                type: Type.NUMBER,
+              },
+
+              reach: {
+                type: Type.NUMBER,
+              },
+
+              likes: {
+                type: Type.NUMBER,
+              },
+
+              comments: {
+                type: Type.NUMBER,
+              },
+
+              shares: {
+                type: Type.NUMBER,
+              },
+
+              clicks: {
+                type: Type.NUMBER,
+              },
+
+              saves: {
+                type: Type.NUMBER,
+              },
+
+              engagementRate: {
+                type: Type.NUMBER,
+              },
+
+              clickThroughRate: {
+                type: Type.NUMBER,
+              },
+            },
+
+            required: [],
           },
         },
 
@@ -65,8 +132,10 @@ const responseSchema = {
 
     platformInsights: {
       type: Type.ARRAY,
+
       items: {
         type: Type.OBJECT,
+
         properties: {
           platform: {
             type: Type.STRING,
@@ -78,6 +147,7 @@ const responseSchema = {
 
           evidencePostIds: {
             type: Type.ARRAY,
+
             items: {
               type: Type.STRING,
             },
@@ -90,6 +160,7 @@ const responseSchema = {
 
     recommendations: {
       type: Type.ARRAY,
+
       items: {
         type: Type.STRING,
       },
@@ -97,6 +168,7 @@ const responseSchema = {
 
     nextBrief: {
       type: Type.OBJECT,
+
       properties: {
         direction: {
           type: Type.STRING,
@@ -111,7 +183,11 @@ const responseSchema = {
         },
 
         platformFocus: {
-          type: Type.STRING,
+          type: Type.ARRAY,
+
+          items: {
+            type: Type.STRING,
+          },
         },
 
         suggestedHook: {
@@ -142,14 +218,29 @@ export async function POST(request: Request) {
   try {
     const body = await request.json();
 
+    const campaignId =
+      typeof body.campaignId === "string" ? body.campaignId.trim() : "";
+
     const analytics = body.analytics as AnalyticsRecord[];
 
     const posts = body.posts as ScheduledPost[];
 
-    if (!Array.isArray(analytics) || analytics.length === 0) {
+    if (!campaignId) {
       return NextResponse.json(
         {
-          error: "No analytics data is available for the report.",
+          error:
+            "Campaign ID is required to generate a campaign-scoped report.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (!Array.isArray(analytics)) {
+      return NextResponse.json(
+        {
+          error: "Analytics data is required.",
         },
         {
           status: 400,
@@ -168,18 +259,66 @@ export async function POST(request: Request) {
       );
     }
 
-    const postMap = new Map(posts.map((post) => [post.id, post]));
+    /*
+     * Strict campaign isolation.
+     *
+     * The frontend already migrates legacy posts before calling
+     * this endpoint. The API still filters again so an unrelated
+     * campaign can never accidentally reach Gemini.
+     */
+    const campaignPosts = posts.filter(
+      (post) => post.campaignId === campaignId,
+    );
 
-    const reportData = analytics.map((item) => {
+    const campaignPostIds = new Set(campaignPosts.map((post) => post.id));
+
+    const campaignAnalytics = analytics.filter(
+      (item) =>
+        item.campaignId === campaignId && campaignPostIds.has(item.postId),
+    );
+
+    if (campaignPosts.length === 0) {
+      return NextResponse.json(
+        {
+          error: "No posts are available for this campaign.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    if (campaignAnalytics.length === 0) {
+      return NextResponse.json(
+        {
+          error: "No analytics data is available for this campaign.",
+        },
+        {
+          status: 400,
+        },
+      );
+    }
+
+    const postMap = new Map(campaignPosts.map((post) => [post.id, post]));
+
+    const reportData = campaignAnalytics.map((item) => {
       const post = postMap.get(item.postId);
 
       return {
         postId: item.postId,
+
+        campaignId,
+
         campaignTitle: post?.campaignTitle ?? "Unknown campaign",
+
         headline: post?.headline ?? "Unknown headline",
+
         platform: item.platform,
+
         status: post?.status ?? "unknown",
+
         scheduledAt: post?.scheduledAt ?? null,
+
         metrics: {
           impressions: item.impressions,
           reach: item.reach,
@@ -194,12 +333,23 @@ export async function POST(request: Request) {
       };
     });
 
+    const campaignTitle = campaignPosts[0]?.campaignTitle ?? "Current campaign";
+
     const prompt = `
 You are an AI content strategist inside a professional
 entertainment content command center.
 
-Generate a weekly performance report from the provided
-mock social-media analytics.
+Generate a weekly performance report for ONE campaign only.
+
+==================================================
+CURRENT CAMPAIGN
+==================================================
+
+Campaign ID:
+${campaignId}
+
+Campaign title:
+${campaignTitle}
 
 ==================================================
 DATA
@@ -208,11 +358,27 @@ DATA
 ${JSON.stringify(reportData, null, 2)}
 
 ==================================================
+CAMPAIGN ISOLATION RULE
+==================================================
+
+Analyze ONLY the data supplied above.
+
+Do NOT reference:
+- previous campaigns
+- other campaign titles
+- historical posts not present in the supplied data
+- unrelated Post IDs
+- unrelated analytics
+
+The supplied Post IDs are the complete evidence set for
+this report.
+
+==================================================
 CRITICAL EVIDENCE RULE
 ==================================================
 
 Every factual performance claim MUST be traceable to one
-or more Post IDs.
+or more supplied Post IDs.
 
 For every key insight:
 
@@ -350,17 +516,22 @@ Before returning JSON, verify:
 6. Recommendations are clearly recommendations.
 7. The next brief is based on observed analytics.
 8. The report is useful to a content team.
+9. No other campaign is mentioned.
+10. Every evidence Post ID belongs to campaign ${campaignId}.
 
 Return ONLY valid JSON.
 `;
 
     const result = await ai.models.generateContent({
       model: "gemini-3.5-flash-lite",
+
       contents: prompt,
 
       config: {
         responseMimeType: "application/json",
+
         responseSchema,
+
         temperature: 0.45,
       },
     });
@@ -378,7 +549,7 @@ Return ONLY valid JSON.
       );
     }
 
-    let parsed;
+    let parsed: ParsedReport;
 
     try {
       parsed = JSON.parse(text);
@@ -397,21 +568,27 @@ Return ONLY valid JSON.
      * Server-side evidence validation.
      *
      * Remove any Post IDs that do not actually exist
-     * in the supplied analytics dataset.
+     * in this campaign's analytics dataset.
      */
-    const validPostIds = new Set(analytics.map((item) => item.postId));
+    const validPostIds = new Set(campaignAnalytics.map((item) => item.postId));
 
     if (Array.isArray(parsed.keyInsights)) {
       parsed.keyInsights = parsed.keyInsights.map(
         (insight: {
           insight: string;
           evidencePostIds: string[];
-          metrics: string;
+          metrics: Record<string, number | string>;
         }) => ({
           ...insight,
+
           evidencePostIds: Array.isArray(insight.evidencePostIds)
             ? insight.evidencePostIds.filter((id) => validPostIds.has(id))
             : [],
+
+          metrics:
+            insight.metrics && typeof insight.metrics === "object"
+              ? insight.metrics
+              : {},
         }),
       );
     }
@@ -424,6 +601,7 @@ Return ONLY valid JSON.
           evidencePostIds: string[];
         }) => ({
           ...insight,
+
           evidencePostIds: Array.isArray(insight.evidencePostIds)
             ? insight.evidencePostIds.filter((id) => validPostIds.has(id))
             : [],
@@ -431,7 +609,32 @@ Return ONLY valid JSON.
       );
     }
 
-    return NextResponse.json(parsed);
+    /*
+     * Normalize platformFocus defensively even though the
+     * response schema now requires an array.
+     */
+    if (parsed.nextBrief && typeof parsed.nextBrief === "object") {
+      const platformFocus = parsed.nextBrief.platformFocus;
+
+      if (typeof platformFocus === "string") {
+        parsed.nextBrief.platformFocus = platformFocus
+          .split(/[,|]/)
+          .map((item: string) => item.trim())
+          .filter(Boolean);
+      } else if (!Array.isArray(platformFocus)) {
+        parsed.nextBrief.platformFocus = [];
+      }
+    }
+
+    /*
+     * Attach the authoritative campaign ID from the request
+     * rather than trusting the model to reproduce it.
+     */
+    parsed.campaignId = campaignId;
+
+    return NextResponse.json({
+      report: parsed,
+    });
   } catch (error) {
     console.error("Weekly report generation error:", error);
 

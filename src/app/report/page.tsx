@@ -14,8 +14,18 @@ import {
   Sparkles,
 } from "lucide-react";
 
+interface ContentBrief {
+  campaignId?: string;
+  title: string;
+  brief: string;
+  language: string;
+  objective: string;
+  platforms: string[];
+}
+
 interface AnalyticsRecord {
   postId: string;
+  campaignId?: string;
   platform: string;
   impressions: number;
   reach: number;
@@ -24,15 +34,20 @@ interface AnalyticsRecord {
   shares: number;
   clicks: number;
   saves: number;
+  engagementRate?: number;
+  clickThroughRate?: number;
+  updatedAt?: string;
 }
 
 interface ScheduledPost {
-  postId: string;
+  id: string;
+  campaignId?: string;
+  campaignTitle: string;
   platform: string;
-  caption?: string;
-  headline?: string;
-  scheduledAt?: string;
-  status?: string;
+  headline: string;
+  scheduledAt: string;
+  status: string;
+  createdAt?: string;
 }
 
 interface KeyInsight {
@@ -56,6 +71,7 @@ interface NextBrief {
 }
 
 interface WeeklyReport {
+  campaignId?: string;
   summary: string;
   keyInsights: KeyInsight[];
   platformInsights: PlatformInsight[];
@@ -63,17 +79,17 @@ interface WeeklyReport {
   nextBrief: NextBrief;
 }
 
-/*
- * Gemini can occasionally return a field such as:
- *
- * platformFocus: "Instagram, YouTube"
- *
- * instead of:
- *
- * platformFocus: ["Instagram", "YouTube"]
- *
- * Normalize both formats before the UI uses the data.
- */
+function generateCampaignId() {
+  if (
+    typeof crypto !== "undefined" &&
+    typeof crypto.randomUUID === "function"
+  ) {
+    return crypto.randomUUID();
+  }
+
+  return `campaign-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function normalizeStringArray(value: unknown): string[] {
   if (Array.isArray(value)) {
     return value.map((item) => String(item).trim()).filter(Boolean);
@@ -87,6 +103,32 @@ function normalizeStringArray(value: unknown): string[] {
   }
 
   return [];
+}
+
+function normalizeMetrics(value: unknown): Record<string, number | string> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    const source = value as Record<string, unknown>;
+
+    return Object.fromEntries(
+      Object.entries(source).filter(
+        ([, item]) => typeof item === "number" || typeof item === "string",
+      ),
+    ) as Record<string, number | string>;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+
+      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+        return normalizeMetrics(parsed);
+      }
+    } catch {
+      return {};
+    }
+  }
+
+  return {};
 }
 
 function normalizeNextBrief(value: unknown): NextBrief {
@@ -112,7 +154,10 @@ function normalizeNextBrief(value: unknown): NextBrief {
   };
 }
 
-function normalizeReport(value: unknown): WeeklyReport | null {
+function normalizeReport(
+  value: unknown,
+  campaignId?: string,
+): WeeklyReport | null {
   if (!value || typeof value !== "object") {
     return null;
   }
@@ -126,17 +171,12 @@ function normalizeReport(value: unknown): WeeklyReport | null {
             ? (item as Record<string, unknown>)
             : {};
 
-        const metrics =
-          insight.metrics && typeof insight.metrics === "object"
-            ? (insight.metrics as Record<string, number | string>)
-            : {};
-
         return {
           insight: typeof insight.insight === "string" ? insight.insight : "",
 
           evidencePostIds: normalizeStringArray(insight.evidencePostIds),
 
-          metrics,
+          metrics: normalizeMetrics(insight.metrics),
         };
       })
     : [];
@@ -166,6 +206,9 @@ function normalizeReport(value: unknown): WeeklyReport | null {
       : [];
 
   return {
+    campaignId:
+      typeof source.campaignId === "string" ? source.campaignId : campaignId,
+
     summary: typeof source.summary === "string" ? source.summary : "",
 
     keyInsights,
@@ -183,36 +226,121 @@ export default function ReportPage() {
 
   const [report, setReport] = useState<WeeklyReport | null>(null);
 
+  const [campaignTitle, setCampaignTitle] = useState("");
+
+  const [campaignId, setCampaignId] = useState("");
+
   const [loading, setLoading] = useState(false);
+
+  const [initializing, setInitializing] = useState(true);
 
   const [error, setError] = useState("");
 
   useEffect(() => {
-    const storedReport = localStorage.getItem("hoichoi-weekly-report");
-
-    if (!storedReport) {
-      return;
-    }
-
     try {
-      const parsed = JSON.parse(storedReport);
+      const briefRaw = localStorage.getItem("hoichoi-content-brief");
 
-      const normalized = normalizeReport(parsed);
-
-      if (!normalized) {
-        localStorage.removeItem("hoichoi-weekly-report");
+      if (!briefRaw) {
+        setInitializing(false);
         return;
       }
 
-      /*
-       * Rewrite old/inconsistent report data using the
-       * normalized structure.
-       */
-      localStorage.setItem("hoichoi-weekly-report", JSON.stringify(normalized));
+      let brief = JSON.parse(briefRaw) as ContentBrief;
 
-      setReport(normalized);
+      let currentCampaignId = brief.campaignId;
+
+      if (!currentCampaignId) {
+        currentCampaignId = generateCampaignId();
+
+        brief = {
+          ...brief,
+          campaignId: currentCampaignId,
+        };
+
+        localStorage.setItem("hoichoi-content-brief", JSON.stringify(brief));
+      }
+
+      setCampaignId(currentCampaignId);
+
+      setCampaignTitle(brief.title);
+
+      /*
+       * Defensive migration for legacy posts.
+       */
+      const postsRaw = localStorage.getItem("hoichoi-scheduled-posts");
+
+      let posts: ScheduledPost[] = [];
+
+      if (postsRaw) {
+        try {
+          const parsed = JSON.parse(postsRaw);
+
+          if (Array.isArray(parsed)) {
+            posts = parsed;
+          }
+        } catch {
+          posts = [];
+        }
+      }
+
+      let postsChanged = false;
+
+      const migratedPosts = posts.map((post) => {
+        if (!post.campaignId && post.campaignTitle === brief.title) {
+          postsChanged = true;
+
+          return {
+            ...post,
+            campaignId: currentCampaignId,
+          };
+        }
+
+        return post;
+      });
+
+      if (postsChanged) {
+        localStorage.setItem(
+          "hoichoi-scheduled-posts",
+          JSON.stringify(migratedPosts),
+        );
+      }
+
+      /*
+       * Only use a previously stored report if it belongs to
+       * the currently selected campaign.
+       */
+      const storedReport = localStorage.getItem("hoichoi-weekly-report");
+
+      if (storedReport) {
+        try {
+          const parsed = JSON.parse(storedReport);
+
+          if (parsed?.campaignId && parsed.campaignId === currentCampaignId) {
+            const normalized = normalizeReport(parsed, currentCampaignId);
+
+            if (normalized) {
+              localStorage.setItem(
+                "hoichoi-weekly-report",
+                JSON.stringify(normalized),
+              );
+
+              setReport(normalized);
+            }
+          } else {
+            /*
+             * Old reports without campaignId are deliberately ignored.
+             * They may belong to another campaign.
+             */
+            localStorage.removeItem("hoichoi-weekly-report");
+          }
+        } catch {
+          localStorage.removeItem("hoichoi-weekly-report");
+        }
+      }
     } catch {
-      localStorage.removeItem("hoichoi-weekly-report");
+      setError("Unable to load the current campaign.");
+    } finally {
+      setInitializing(false);
     }
   }, []);
 
@@ -221,30 +349,96 @@ export default function ReportPage() {
     setError("");
 
     try {
+      const briefRaw = localStorage.getItem("hoichoi-content-brief");
+
+      if (!briefRaw) {
+        throw new Error(
+          "No active campaign was found. Create a campaign first.",
+        );
+      }
+
+      const brief = JSON.parse(briefRaw) as ContentBrief;
+
+      const currentCampaignId = brief.campaignId;
+
+      if (!currentCampaignId) {
+        throw new Error("The current campaign does not have a campaign ID.");
+      }
+
       const analyticsRaw = localStorage.getItem("hoichoi-analytics");
 
       const postsRaw = localStorage.getItem("hoichoi-scheduled-posts");
 
-      const analytics: AnalyticsRecord[] = analyticsRaw
+      const allAnalytics: AnalyticsRecord[] = analyticsRaw
         ? JSON.parse(analyticsRaw)
         : [];
 
-      const posts: ScheduledPost[] = postsRaw ? JSON.parse(postsRaw) : [];
+      const allPosts: ScheduledPost[] = postsRaw ? JSON.parse(postsRaw) : [];
 
-      if (analytics.length === 0 || posts.length === 0) {
+      /*
+       * Match legacy posts by campaign title if campaignId
+       * was not present when they were created.
+       */
+      const migratedPosts = allPosts.map((post) => {
+        if (!post.campaignId && post.campaignTitle === brief.title) {
+          return {
+            ...post,
+            campaignId: currentCampaignId,
+          };
+        }
+
+        return post;
+      });
+
+      localStorage.setItem(
+        "hoichoi-scheduled-posts",
+        JSON.stringify(migratedPosts),
+      );
+
+      const currentPosts = migratedPosts.filter(
+        (post) => post.campaignId === currentCampaignId,
+      );
+
+      const currentPostIds = new Set(currentPosts.map((post) => post.id));
+
+      const currentAnalytics = allAnalytics
+        .map((item) => {
+          const matchingPost = migratedPosts.find(
+            (post) => post.id === item.postId,
+          );
+
+          if (!item.campaignId && matchingPost?.campaignId) {
+            return {
+              ...item,
+              campaignId: matchingPost.campaignId,
+            };
+          }
+
+          return item;
+        })
+        .filter(
+          (item) =>
+            item.campaignId === currentCampaignId &&
+            currentPostIds.has(item.postId),
+        );
+
+      if (currentAnalytics.length === 0 || currentPosts.length === 0) {
         throw new Error(
-          "Generate analytics and publish at least one post before creating the AI report.",
+          "Publish at least one post for this campaign and generate its analytics before creating the AI report.",
         );
       }
 
       const response = await fetch("/api/report", {
         method: "POST",
+
         headers: {
           "Content-Type": "application/json",
         },
+
         body: JSON.stringify({
-          analytics,
-          posts,
+          campaignId: currentCampaignId,
+          analytics: currentAnalytics,
+          posts: currentPosts,
         }),
       });
 
@@ -258,17 +452,22 @@ export default function ReportPage() {
         throw new Error("The AI returned an invalid report.");
       }
 
-      const normalizedReport = normalizeReport(data.report);
+      const normalizedReport = normalizeReport(data.report, currentCampaignId);
 
       if (!normalizedReport) {
         throw new Error("The AI returned an invalid report structure.");
       }
 
-      setReport(normalizedReport);
+      const finalReport: WeeklyReport = {
+        ...normalizedReport,
+        campaignId: currentCampaignId,
+      };
+
+      setReport(finalReport);
 
       localStorage.setItem(
         "hoichoi-weekly-report",
-        JSON.stringify(normalizedReport),
+        JSON.stringify(finalReport),
       );
     } catch (err) {
       setError(
@@ -298,6 +497,7 @@ export default function ReportPage() {
       "hoichoi-report-feedback-source",
       JSON.stringify({
         usedAt: new Date().toISOString(),
+        campaignId,
         report,
       }),
     );
@@ -305,10 +505,19 @@ export default function ReportPage() {
     router.push("/create?from=report");
   }
 
+  if (initializing) {
+    return (
+      <main className="min-h-screen bg-[#f7f7f8] text-zinc-950">
+        <div className="flex min-h-screen items-center justify-center">
+          <Loader2 className="h-7 w-7 animate-spin" />
+        </div>
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f7f7f8] text-zinc-950">
       <div className="mx-auto max-w-6xl px-5 py-8 sm:px-8 lg:px-10">
-        {/* Header */}
         <div className="mb-8">
           <button
             type="button"
@@ -334,6 +543,12 @@ export default function ReportPage() {
                 Turn campaign performance into evidence-backed insights and a
                 direction for your next campaign.
               </p>
+
+              {campaignTitle && (
+                <div className="mt-4 inline-flex items-center rounded-lg border bg-white px-3 py-2 text-xs font-medium text-zinc-600">
+                  Campaign: {campaignTitle}
+                </div>
+              )}
             </div>
 
             <button
@@ -362,14 +577,12 @@ export default function ReportPage() {
           </div>
         </div>
 
-        {/* Error */}
         {error && (
           <div className="mb-6 rounded-2xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
             {error}
           </div>
         )}
 
-        {/* Empty state */}
         {!report && !loading && (
           <section className="rounded-3xl border bg-white p-8 text-center sm:p-12">
             <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-950 text-white">
@@ -381,8 +594,9 @@ export default function ReportPage() {
             </h2>
 
             <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-zinc-500">
-              Generate analytics first, then let the AI analyze your campaign
-              performance and create the next campaign direction.
+              Generate analytics first, then let the AI analyze this
+              campaign&apos;s performance and create the next campaign
+              direction.
             </p>
 
             <button
@@ -413,7 +627,6 @@ export default function ReportPage() {
 
         {report && !loading && (
           <div className="space-y-6">
-            {/* Summary */}
             <section className="rounded-3xl bg-zinc-950 p-7 text-white sm:p-8">
               <div className="flex items-start gap-4">
                 <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/10">
@@ -432,7 +645,6 @@ export default function ReportPage() {
               </div>
             </section>
 
-            {/* Key insights */}
             <section className="rounded-3xl border bg-white p-6 sm:p-8">
               <div className="flex items-center gap-3">
                 <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-100">
@@ -483,7 +695,6 @@ export default function ReportPage() {
               </div>
             </section>
 
-            {/* Platform insights */}
             <section className="rounded-3xl border bg-white p-6 sm:p-8">
               <h2 className="text-lg font-semibold">Cross-platform insights</h2>
 
@@ -522,7 +733,6 @@ export default function ReportPage() {
               </div>
             </section>
 
-            {/* Recommendations */}
             <section className="rounded-3xl border bg-white p-6 sm:p-8">
               <h2 className="text-lg font-semibold">Recommendations</h2>
 
@@ -542,7 +752,6 @@ export default function ReportPage() {
               </div>
             </section>
 
-            {/* Next brief */}
             <section className="overflow-hidden rounded-3xl border bg-white">
               <div className="bg-zinc-950 p-7 text-white sm:p-8">
                 <div>
