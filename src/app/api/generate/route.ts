@@ -1,7 +1,7 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 import { NextResponse } from "next/server";
 
-type GenerateRequest = {
+type ContentBrief = {
   title: string;
   brief: string;
   language: string;
@@ -17,257 +17,628 @@ type PlatformContent = {
   cta: string;
 };
 
-type GenerateResponse = {
-  contents: PlatformContent[];
+type PlatformVisual = {
+  platform: string;
+  visualConcept: string;
+  mood: string;
+  composition: string;
+  background: string;
+  accent: string;
+  foreground: string;
+  decorativeElements: string[];
+  visualText: string;
 };
 
-const PLATFORM_GUIDANCE: Record<string, string> = {
-  Instagram:
-    "Create a short, visually evocative teaser. Lead with a striking image or moment. Use a concise caption and a small set of relevant hashtags.",
-  YouTube:
-    "Create a distinctive video title and a description that builds anticipation. The description should be more informative than the Instagram caption, without inventing plot details.",
-  Facebook:
-    "Create a conversational post that invites an authentic response. Use a different creative angle from Instagram and YouTube.",
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+});
+
+const responseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    contents: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          platform: {
+            type: Type.STRING,
+          },
+          headline: {
+            type: Type.STRING,
+          },
+          caption: {
+            type: Type.STRING,
+          },
+          hashtags: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.STRING,
+            },
+          },
+          cta: {
+            type: Type.STRING,
+          },
+        },
+        required: ["platform", "headline", "caption", "hashtags", "cta"],
+      },
+    },
+
+    visuals: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          platform: {
+            type: Type.STRING,
+          },
+          visualConcept: {
+            type: Type.STRING,
+          },
+          mood: {
+            type: Type.STRING,
+          },
+          composition: {
+            type: Type.STRING,
+          },
+          background: {
+            type: Type.STRING,
+          },
+          accent: {
+            type: Type.STRING,
+          },
+          foreground: {
+            type: Type.STRING,
+          },
+          decorativeElements: {
+            type: Type.ARRAY,
+            items: {
+              type: Type.STRING,
+            },
+          },
+          visualText: {
+            type: Type.STRING,
+          },
+        },
+        required: [
+          "platform",
+          "visualConcept",
+          "mood",
+          "composition",
+          "background",
+          "accent",
+          "foreground",
+          "decorativeElements",
+          "visualText",
+        ],
+      },
+    },
+  },
+
+  required: ["contents", "visuals"],
 };
 
-function isPlatformContent(value: unknown): value is PlatformContent {
-  if (!value || typeof value !== "object") return false;
+function getPlatformInstructions(platform: string) {
+  if (platform === "Instagram") {
+    return `
+INSTAGRAM
 
-  const item = value as Record<string, unknown>;
+Create:
+- A visually striking square-first concept
+- Short, memorable headline
+- Engaging but concise caption
+- Social-friendly CTA
+- Relevant hashtags
 
-  return (
-    typeof item.platform === "string" &&
-    typeof item.headline === "string" &&
-    typeof item.caption === "string" &&
-    Array.isArray(item.hashtags) &&
-    item.hashtags.every((tag) => typeof tag === "string") &&
-    typeof item.cta === "string"
-  );
+Aspect ratio:
+1:1
+
+The creative should feel designed specifically for Instagram,
+not like a cropped version of another platform.
+`;
+  }
+
+  if (platform === "YouTube") {
+    return `
+YOUTUBE
+
+Create:
+- A strong cinematic headline
+- A more dramatic promotional caption
+- Thumbnail-friendly visual concept
+- Clear visual hierarchy
+- Strong anticipation
+
+Aspect ratio:
+16:9
+
+The creative should feel designed specifically for YouTube.
+`;
+  }
+
+  if (platform === "Facebook") {
+    return `
+FACEBOOK
+
+Create:
+- A slightly more descriptive headline
+- A conversational promotional caption
+- A share-friendly CTA
+- Editorial/social visual treatment
+
+Aspect ratio:
+4:5
+
+The creative should feel designed specifically for Facebook.
+`;
+  }
+
+  return "";
+}
+
+function buildPrompt(brief: ContentBrief) {
+  const platforms = brief.platforms.join(", ");
+
+  return `
+You are an expert entertainment marketing AI working inside a professional
+multi-platform content studio.
+
+Your task is NOT to copy the user's brief.
+
+Your task is to transform a short campaign brief into polished,
+creative, platform-specific marketing content.
+
+==================================================
+CAMPAIGN INPUT
+==================================================
+
+TITLE:
+${brief.title}
+
+USER BRIEF:
+${brief.brief}
+
+LANGUAGE:
+${brief.language}
+
+CONTENT TYPE:
+${brief.contentType}
+
+PLATFORMS:
+${platforms}
+
+==================================================
+CORE CREATIVE PRINCIPLE
+==================================================
+
+Think like a professional entertainment social-media strategist.
+
+The user's brief is the SOURCE OF TRUTH for the campaign.
+
+However, the final output must be a CREATIVE TRANSFORMATION of that brief,
+not a repetition or paraphrase.
+
+You should:
+
+- rewrite the idea naturally
+- create stronger hooks
+- create promotional language
+- create curiosity
+- create anticipation
+- improve emotional impact
+- make headlines memorable
+- make captions feel human
+- adapt copy to each platform
+- create visually interesting concepts
+- turn a basic idea into publishable social content
+
+DO NOT simply repeat the user's sentence.
+
+==================================================
+VERY IMPORTANT: FACTS VS CREATIVE LANGUAGE
+==================================================
+
+You are allowed to creatively elaborate on the PRESENTATION of the idea.
+
+You are NOT allowed to invent NEW FACTS.
+
+For example, if the brief is:
+
+"Kobitar notun show asche"
+
+Good creative expansion:
+
+Headline:
+"কবিতা, এবার নতুন এক অধ্যায়"
+
+Caption:
+"পরিচিত নাম, নতুন আয়োজন। কবিতাকে ঘিরে আসছে নতুন শো।
+অপেক্ষা থাকুক—শুরু হতে চলেছে এক নতুন পর্ব।"
+
+Visual:
+"Minimal cinematic announcement featuring the title 'Kobita',
+with dramatic typography, layered paper textures and an abstract
+spotlight suggesting anticipation."
+
+These are creative interpretations of the supplied announcement.
+
+Bad output:
+
+"Durga Pujo-te Kobitar notun show"
+
+Why?
+
+Because Durga Puja was never mentioned.
+
+Another bad output:
+
+"Kobita-r romantic thriller story"
+
+Why?
+
+Because the genre was never provided.
+
+==================================================
+WHAT YOU MAY INVENT
+==================================================
+
+You MAY invent:
+
+- marketing hooks
+- slogans
+- taglines
+- emotional phrasing
+- curiosity-driven language
+- anticipation
+- calls to action
+- typography treatment
+- abstract visual metaphors
+- lighting style
+- composition
+- color direction
+- graphic elements
+- promotional atmosphere
+- social-media presentation
+
+These are CREATIVE PRESENTATION choices.
+
+==================================================
+WHAT YOU MUST NEVER INVENT
+==================================================
+
+Do NOT invent factual information such as:
+
+- festivals
+- release dates
+- episode numbers
+- actors
+- directors
+- locations
+- characters
+- plot
+- story
+- genre
+- awards
+- reviews
+- ratings
+- statistics
+- streaming availability
+- production details
+- celebrity names
+- partnerships
+- brands
+- special events
+- cultural occasions
+- plot twists
+- fictional facts presented as real
+
+unless explicitly provided by the user.
+
+==================================================
+DO NOT COPY THE BRIEF
+==================================================
+
+This is extremely important.
+
+The final headline should NOT simply equal the user's brief.
+
+The caption should NOT simply repeat the brief sentence multiple times.
+
+Instead:
+
+INPUT:
+"Kobitar notun show asche"
+
+POSSIBLE CREATIVE DIRECTIONS:
+
+Headline examples:
+- "কবিতা, এবার নতুন এক অধ্যায়"
+- "এক নতুন কবিতার অপেক্ষা"
+- "কবিতা আসছে, নতুন রূপে"
+- "শুরু হোক নতুন অপেক্ষা"
+- "পরিচিত নাম, নতুন আয়োজন"
+
+Caption direction:
+Build anticipation around the announcement without inventing
+what the show is about.
+
+The final result should feel like a real marketing team transformed
+a rough internal brief into publishable campaign copy.
+
+==================================================
+LANGUAGE
+==================================================
+
+Generate user-facing content in:
+
+${brief.language}
+
+If the language is Bengali:
+
+- Use natural modern Bengali
+- Avoid archaic literary Bengali
+- Use polished entertainment-industry language
+- Do not mechanically translate English
+- Make the Bengali sound like real social-media copy
+
+==================================================
+CONTENT TYPE
+==================================================
+
+The requested content type is:
+
+${brief.contentType}
+
+Respect this content type when designing the campaign.
+
+==================================================
+PLATFORM DIFFERENTIATION
+==================================================
+
+${brief.platforms
+  .map((platform) => getPlatformInstructions(platform))
+  .join("\n")}
+
+==================================================
+VISUAL CREATIVE
+==================================================
+
+Create a genuinely different visual direction for each platform.
+
+Do NOT just describe:
+
+"same poster but cropped differently."
+
+Instead think about:
+
+Instagram:
+- bold typography
+- square composition
+- strong central focal point
+- scroll-stopping visual hierarchy
+
+YouTube:
+- cinematic composition
+- wide negative space
+- large readable title
+- thumbnail-friendly contrast
+
+Facebook:
+- editorial portrait composition
+- more breathing room
+- social announcement aesthetic
+- strong readable typography
+
+If the campaign does not provide a physical setting,
+use an abstract or graphic visual treatment.
+
+For example:
+
+- typography
+- shadows
+- paper textures
+- light beams
+- gradients
+- abstract shapes
+- silhouettes
+- atmospheric particles
+- layered graphic elements
+
+Do not invent real-world story elements.
+
+==================================================
+HASHTAGS
+==================================================
+
+Create relevant hashtags based on:
+
+- campaign title
+- supplied campaign concept
+- content type
+- platform
+
+Do not create hashtags around facts that were not supplied.
+
+==================================================
+CTA
+==================================================
+
+Create a useful promotional CTA.
+
+Examples:
+
+- "Stay tuned."
+- "অপেক্ষায় থাকুন।"
+- "নতুন আপডেটের জন্য চোখ রাখুন।"
+- "শীঘ্রই আরও জানুন।"
+
+Do not invent a release date or platform unless provided.
+
+==================================================
+QUALITY BAR
+==================================================
+
+The output should feel like it was created by:
+
+- an entertainment marketing strategist
+- a social-media copywriter
+- an art director
+- a platform specialist
+
+It should NOT feel like:
+
+- raw AI text
+- a paraphrase
+- a summary
+- the user's original brief repeated several times
+
+==================================================
+FINAL VALIDATION
+==================================================
+
+Before returning the result, silently check:
+
+1. Is the copy creatively different from the original brief?
+2. Does every platform have a different creative treatment?
+3. Did I preserve the actual campaign idea?
+4. Did I avoid inventing factual information?
+5. Does the copy sound publishable?
+6. Does the visual concept add creative value?
+7. Are the headlines memorable?
+8. Are the captions natural?
+9. Is the Bengali natural if Bengali was requested?
+10. Would a real social-media team actually be able to publish this?
+
+Return ONLY valid JSON matching the requested schema.
+`;
 }
 
 export async function POST(request: Request) {
   try {
-    const apiKey = process.env.GEMINI_API_KEY;
+    const body = (await request.json()) as ContentBrief;
 
-    if (!apiKey) {
+    if (!body || typeof body !== "object") {
       return NextResponse.json(
         {
-          error:
-            "GEMINI_API_KEY is missing. Add it to .env.local and restart the server.",
+          error: "Invalid request body.",
         },
-        { status: 500 },
+        {
+          status: 400,
+        },
       );
     }
 
-    const body = (await request.json()) as Partial<GenerateRequest>;
-
     if (!body.title?.trim()) {
       return NextResponse.json(
-        { error: "Campaign title is required." },
-        { status: 400 },
+        {
+          error: "Campaign title is required.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
     if (!body.brief?.trim()) {
       return NextResponse.json(
-        { error: "Content brief is required." },
-        { status: 400 },
+        {
+          error: "Campaign brief is required.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
-    if (
-      !Array.isArray(body.platforms) ||
-      body.platforms.length === 0 ||
-      !body.platforms.every((platform) => typeof platform === "string")
-    ) {
+    if (!Array.isArray(body.platforms) || body.platforms.length === 0) {
       return NextResponse.json(
-        { error: "Select at least one valid platform." },
-        { status: 400 },
+        {
+          error: "At least one platform is required.",
+        },
+        {
+          status: 400,
+        },
       );
     }
 
-    const platforms = [...new Set(body.platforms)];
+    const prompt = buildPrompt(body);
 
-    const platformInstructions = platforms
-      .map(
-        (platform) =>
-          `${platform}: ${
-            PLATFORM_GUIDANCE[platform] ??
-            "Create content specifically suited to this platform."
-          }`,
-      )
-      .join("\n");
-
-    const prompt = `
-You are a Bengali-first creative strategist for a streaming platform.
-
-Produce original social-media campaign concepts based on the user's brief.
-
-CAMPAIGN INFORMATION
-Title: ${body.title}
-Brief: ${body.brief}
-Language: ${body.language ?? "Bengali"}
-Content type: ${body.contentType ?? "Social campaign"}
-Platforms: ${platforms.join(", ")}
-
-PLATFORM INSTRUCTIONS
-${platformInstructions}
-
-CREATIVE REQUIREMENTS
-1. Read the brief closely. Identify its actual creative direction.
-2. Make each platform use a DIFFERENT creative concept, not merely
-   different wording for the same concept.
-3. Write natural, contemporary Bengali when Bengali is requested.
-4. Avoid generic streaming-promotion language.
-5. Do not automatically announce that a show is coming soon.
-6. If the user requests subtle hints, preserve the mystery.
-   Do not reveal a show title, plot, cast, or release date unless supplied.
-7. Connect the creative concept to the specific occasion or theme
-   in the brief, without relying on clichés.
-8. Use concrete imagery, sensory detail, or an intriguing question
-   where appropriate.
-9. Do not invent facts about the show.
-10. Make headlines, captions, CTAs, and hashtags platform-appropriate.
-11. Return exactly one content object for each requested platform.
-12. Return only valid JSON.
-
-PROHIBITED GENERIC PHRASES AND PATTERNS
-Do not use or lightly reword these:
-- "একটা গল্প, কিছু অনুভূতি"
-- "অনেকটা অপেক্ষা"
-- "নতুন কিছু আসছে"
-- "চোখ রাখুন"
-- "সঙ্গে থাকুন"
-- "অপেক্ষার অবসান"
-- "রহস্যের পর্দা উঠবে"
-- "Stay tuned"
-- "Something exciting is coming"
-
-Do not insert the campaign title into every caption as filler.
-
-OUTPUT FORMAT
-{
-  "contents": [
-    {
-      "platform": "Instagram",
-      "headline": "Platform-specific headline",
-      "caption": "Original platform-specific caption",
-      "hashtags": ["#RelevantTag"],
-      "cta": "Platform-specific call to action"
-    }
-  ]
-}
-
-Before returning, internally check:
-- Is every platform's creative angle distinct?
-- Does every caption directly relate to the brief?
-- Could this caption be used for any random show?
-  If yes, rewrite it to be more specific to the brief.
-- Have you invented any unsupported show details?
-  If yes, remove them.
-`;
-
-    const ai = new GoogleGenAI({ apiKey });
-
-    const response = await ai.models.generateContent({
-      // Keep the model ID that is already working with your API key.
+    const result = await ai.models.generateContent({
       model: "gemini-3.5-flash-lite",
       contents: prompt,
       config: {
-        temperature: 1,
         responseMimeType: "application/json",
-        responseSchema: {
-          type: "object",
-          properties: {
-            contents: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  platform: { type: "string" },
-                  headline: { type: "string" },
-                  caption: { type: "string" },
-                  hashtags: {
-                    type: "array",
-                    items: { type: "string" },
-                  },
-                  cta: { type: "string" },
-                },
-                required: [
-                  "platform",
-                  "headline",
-                  "caption",
-                  "hashtags",
-                  "cta",
-                ],
-              },
-            },
-          },
-          required: ["contents"],
-        },
+        responseSchema,
+        temperature: 0.75,
       },
     });
 
-    if (!response.text) {
+    const text = result.text;
+
+    if (!text) {
       return NextResponse.json(
-        { error: "Gemini returned an empty response." },
-        { status: 502 },
+        {
+          error: "Gemini returned an empty response.",
+        },
+        {
+          status: 502,
+        },
       );
     }
 
-    let parsed: unknown;
+    let parsed: {
+      contents: PlatformContent[];
+      visuals: PlatformVisual[];
+    };
 
     try {
-      parsed = JSON.parse(response.text);
+      parsed = JSON.parse(text);
     } catch {
       return NextResponse.json(
-        { error: "Gemini returned invalid JSON." },
-        { status: 502 },
+        {
+          error: "Gemini returned invalid JSON.",
+        },
+        {
+          status: 502,
+        },
       );
     }
 
-    if (
-      !parsed ||
-      typeof parsed !== "object" ||
-      !("contents" in parsed) ||
-      !Array.isArray(parsed.contents) ||
-      !parsed.contents.every(isPlatformContent)
-    ) {
+    if (!Array.isArray(parsed.contents) || !Array.isArray(parsed.visuals)) {
       return NextResponse.json(
-        { error: "Gemini returned an unexpected content structure." },
-        { status: 502 },
+        {
+          error: "Gemini returned an incomplete content structure.",
+        },
+        {
+          status: 502,
+        },
       );
     }
 
-    const generated = parsed as GenerateResponse;
+    const requestedPlatforms = new Set(body.platforms);
 
-    const orderedContents = platforms.map((platform) =>
-      generated.contents.find(
-        (item) => item.platform.toLowerCase() === platform.toLowerCase(),
-      ),
+    parsed.contents = parsed.contents.filter((item) =>
+      requestedPlatforms.has(item.platform),
     );
 
-    if (orderedContents.some((item) => !item)) {
-      return NextResponse.json(
-        { error: "Gemini did not generate every requested platform." },
-        { status: 502 },
-      );
-    }
+    parsed.visuals = parsed.visuals.filter((item) =>
+      requestedPlatforms.has(item.platform),
+    );
 
-    return NextResponse.json({
-      contents: orderedContents,
-    });
+    return NextResponse.json(parsed);
   } catch (error) {
-    console.error("Gemini generation error:", error);
+    console.error("Content generation error:", error);
 
     return NextResponse.json(
       {
         error:
           error instanceof Error
             ? error.message
-            : "Unexpected Gemini generation error.",
+            : "Failed to generate content.",
       },
-      { status: 500 },
+      {
+        status: 500,
+      },
     );
   }
 }
