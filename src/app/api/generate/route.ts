@@ -21,19 +21,45 @@ type GenerateResponse = {
   contents: PlatformContent[];
 };
 
+const PLATFORM_GUIDANCE: Record<string, string> = {
+  Instagram:
+    "Create a short, visually evocative teaser. Lead with a striking image or moment. Use a concise caption and a small set of relevant hashtags.",
+  YouTube:
+    "Create a distinctive video title and a description that builds anticipation. The description should be more informative than the Instagram caption, without inventing plot details.",
+  Facebook:
+    "Create a conversational post that invites an authentic response. Use a different creative angle from Instagram and YouTube.",
+};
+
+function isPlatformContent(value: unknown): value is PlatformContent {
+  if (!value || typeof value !== "object") return false;
+
+  const item = value as Record<string, unknown>;
+
+  return (
+    typeof item.platform === "string" &&
+    typeof item.headline === "string" &&
+    typeof item.caption === "string" &&
+    Array.isArray(item.hashtags) &&
+    item.hashtags.every((tag) => typeof tag === "string") &&
+    typeof item.cta === "string"
+  );
+}
+
 export async function POST(request: Request) {
   try {
-    if (!process.env.GEMINI_API_KEY) {
+    const apiKey = process.env.GEMINI_API_KEY;
+
+    if (!apiKey) {
       return NextResponse.json(
         {
           error:
-            "GEMINI_API_KEY is not configured. Add it to .env.local and restart the development server.",
+            "GEMINI_API_KEY is missing. Add it to .env.local and restart the server.",
         },
         { status: 500 },
       );
     }
 
-    const body = (await request.json()) as GenerateRequest;
+    const body = (await request.json()) as Partial<GenerateRequest>;
 
     if (!body.title?.trim()) {
       return NextResponse.json(
@@ -49,100 +75,106 @@ export async function POST(request: Request) {
       );
     }
 
-    if (!Array.isArray(body.platforms) || body.platforms.length === 0) {
+    if (
+      !Array.isArray(body.platforms) ||
+      body.platforms.length === 0 ||
+      !body.platforms.every((platform) => typeof platform === "string")
+    ) {
       return NextResponse.json(
-        { error: "At least one platform is required." },
+        { error: "Select at least one valid platform." },
         { status: 400 },
       );
     }
 
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-    });
+    const platforms = [...new Set(body.platforms)];
 
-    const systemPrompt = `
-You are the AI content generation engine for a professional
-streaming company's AI Content Studio.
+    const platformInstructions = platforms
+      .map(
+        (platform) =>
+          `${platform}: ${
+            PLATFORM_GUIDANCE[platform] ??
+            "Create content specifically suited to this platform."
+          }`,
+      )
+      .join("\n");
 
-Your job is to transform ONE campaign brief into genuinely
-platform-specific social media content.
+    const prompt = `
+You are a Bengali-first creative strategist for a streaming platform.
 
-IMPORTANT RULES:
+Produce original social-media campaign concepts based on the user's brief.
 
-1. Bengali must be naturally written Bengali.
-2. English must sound naturally written in English.
-3. Hindi must sound naturally written in Hindi.
-4. Never produce literal machine-translated language.
-5. Platform variants must be meaningfully different.
-6. Do not simply translate or relabel one caption.
-7. Instagram should be concise, visual, engaging and hashtag-aware.
-8. YouTube should have a stronger title/headline and a more informative description.
-9. Facebook should encourage conversation and sharing.
-10. Never invent factual claims that are not supported by the brief.
-11. Keep the tone suitable for a professional streaming/content platform.
-12. Return ONLY valid JSON.
-13. Generate content for EVERY requested platform.
+CAMPAIGN INFORMATION
+Title: ${body.title}
+Brief: ${body.brief}
+Language: ${body.language ?? "Bengali"}
+Content type: ${body.contentType ?? "Social campaign"}
+Platforms: ${platforms.join(", ")}
 
-Required JSON structure:
+PLATFORM INSTRUCTIONS
+${platformInstructions}
 
+CREATIVE REQUIREMENTS
+1. Read the brief closely. Identify its actual creative direction.
+2. Make each platform use a DIFFERENT creative concept, not merely
+   different wording for the same concept.
+3. Write natural, contemporary Bengali when Bengali is requested.
+4. Avoid generic streaming-promotion language.
+5. Do not automatically announce that a show is coming soon.
+6. If the user requests subtle hints, preserve the mystery.
+   Do not reveal a show title, plot, cast, or release date unless supplied.
+7. Connect the creative concept to the specific occasion or theme
+   in the brief, without relying on clichés.
+8. Use concrete imagery, sensory detail, or an intriguing question
+   where appropriate.
+9. Do not invent facts about the show.
+10. Make headlines, captions, CTAs, and hashtags platform-appropriate.
+11. Return exactly one content object for each requested platform.
+12. Return only valid JSON.
+
+PROHIBITED GENERIC PHRASES AND PATTERNS
+Do not use or lightly reword these:
+- "একটা গল্প, কিছু অনুভূতি"
+- "অনেকটা অপেক্ষা"
+- "নতুন কিছু আসছে"
+- "চোখ রাখুন"
+- "সঙ্গে থাকুন"
+- "অপেক্ষার অবসান"
+- "রহস্যের পর্দা উঠবে"
+- "Stay tuned"
+- "Something exciting is coming"
+
+Do not insert the campaign title into every caption as filler.
+
+OUTPUT FORMAT
 {
   "contents": [
     {
       "platform": "Instagram",
-      "headline": "...",
-      "caption": "...",
-      "hashtags": ["...", "..."],
-      "cta": "..."
+      "headline": "Platform-specific headline",
+      "caption": "Original platform-specific caption",
+      "hashtags": ["#RelevantTag"],
+      "cta": "Platform-specific call to action"
     }
   ]
 }
+
+Before returning, internally check:
+- Is every platform's creative angle distinct?
+- Does every caption directly relate to the brief?
+- Could this caption be used for any random show?
+  If yes, rewrite it to be more specific to the brief.
+- Have you invented any unsupported show details?
+  If yes, remove them.
 `;
 
-    const userPrompt = `
-Campaign title:
-${body.title}
-
-Campaign brief:
-${body.brief}
-
-Primary language:
-${body.language}
-
-Content type:
-${body.contentType}
-
-Target platforms:
-${body.platforms.join(", ")}
-
-Generate one platform-specific content package for every requested platform.
-
-The content must be directly based on the campaign brief.
-
-Make each platform meaningfully different in:
-- headline
-- caption structure
-- tone
-- CTA
-- hashtag strategy
-
-Do not invent facts, characters, dates, actors, release information,
-statistics, awards, or other details that are not present in the brief.
-`;
+    const ai = new GoogleGenAI({ apiKey });
 
     const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: [
-        {
-          role: "user",
-          parts: [
-            {
-              text: `${systemPrompt}\n\n${userPrompt}`,
-            },
-          ],
-        },
-      ],
+      // Keep the model ID that is already working with your API key.
+      model: "gemini-3.5-flash-lite",
+      contents: prompt,
       config: {
-        temperature: 0.8,
+        temperature: 1,
         responseMimeType: "application/json",
         responseSchema: {
           type: "object",
@@ -152,24 +184,14 @@ statistics, awards, or other details that are not present in the brief.
               items: {
                 type: "object",
                 properties: {
-                  platform: {
-                    type: "string",
-                  },
-                  headline: {
-                    type: "string",
-                  },
-                  caption: {
-                    type: "string",
-                  },
+                  platform: { type: "string" },
+                  headline: { type: "string" },
+                  caption: { type: "string" },
                   hashtags: {
                     type: "array",
-                    items: {
-                      type: "string",
-                    },
+                    items: { type: "string" },
                   },
-                  cta: {
-                    type: "string",
-                  },
+                  cta: { type: "string" },
                 },
                 required: [
                   "platform",
@@ -186,43 +208,54 @@ statistics, awards, or other details that are not present in the brief.
       },
     });
 
-    const rawContent = response.text;
-
-    if (!rawContent) {
+    if (!response.text) {
       return NextResponse.json(
-        {
-          error: "Gemini returned an empty response.",
-        },
+        { error: "Gemini returned an empty response." },
         { status: 502 },
       );
     }
 
-    let parsed: GenerateResponse;
+    let parsed: unknown;
 
     try {
-      parsed = JSON.parse(rawContent) as GenerateResponse;
+      parsed = JSON.parse(response.text);
     } catch {
-      console.error("Invalid Gemini JSON:", rawContent);
-
       return NextResponse.json(
-        {
-          error: "Gemini returned invalid JSON.",
-        },
+        { error: "Gemini returned invalid JSON." },
         { status: 502 },
       );
     }
 
-    if (!parsed.contents || !Array.isArray(parsed.contents)) {
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      !("contents" in parsed) ||
+      !Array.isArray(parsed.contents) ||
+      !parsed.contents.every(isPlatformContent)
+    ) {
       return NextResponse.json(
-        {
-          error: "Gemini response does not contain a valid contents array.",
-        },
+        { error: "Gemini returned an unexpected content structure." },
+        { status: 502 },
+      );
+    }
+
+    const generated = parsed as GenerateResponse;
+
+    const orderedContents = platforms.map((platform) =>
+      generated.contents.find(
+        (item) => item.platform.toLowerCase() === platform.toLowerCase(),
+      ),
+    );
+
+    if (orderedContents.some((item) => !item)) {
+      return NextResponse.json(
+        { error: "Gemini did not generate every requested platform." },
         { status: 502 },
       );
     }
 
     return NextResponse.json({
-      contents: parsed.contents,
+      contents: orderedContents,
     });
   } catch (error) {
     console.error("Gemini generation error:", error);
