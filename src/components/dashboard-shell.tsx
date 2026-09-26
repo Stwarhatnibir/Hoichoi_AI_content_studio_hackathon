@@ -1,346 +1,424 @@
 "use client";
 
+import Link from "next/link";
 import {
-  Activity,
   BarChart3,
-  CalendarDays,
-  CheckCircle2,
+  BrainCircuit,
   ChevronRight,
   FileText,
-  Home,
+  LayoutDashboard,
+  Megaphone,
   Plus,
-  Send,
-  Settings,
   Sparkles,
-  Wand2,
 } from "lucide-react";
-import { useRouter } from "next/navigation";
 
-const navigation = [
+const navItems = [
   {
     label: "Dashboard",
-    icon: Home,
-    route: "/",
+    href: "/",
+    icon: LayoutDashboard,
   },
   {
     label: "Create",
+    href: "/create",
     icon: Plus,
-    route: "/create",
   },
   {
     label: "AI Studio",
-    icon: Wand2,
-    route: "/studio",
+    href: "/studio",
+    icon: BrainCircuit,
   },
   {
     label: "Publisher",
-    icon: Send,
-    route: "/publish",
+    href: "/publish",
+    icon: Megaphone,
   },
   {
     label: "Analytics",
+    href: "/analytics",
     icon: BarChart3,
-    route: "/analytics",
-  },
-];
-
-const recentContent = [
-  {
-    title: "Kobita",
-    platform: "Instagram",
-    status: "Draft",
-    time: "Just now",
   },
   {
-    title: "New Show Campaign",
-    platform: "YouTube",
-    status: "Scheduled",
-    time: "2h ago",
-  },
-  {
-    title: "Weekly Entertainment",
-    platform: "Facebook",
-    status: "Published",
-    time: "Yesterday",
+    label: "AI Report",
+    href: "/report",
+    icon: FileText,
   },
 ];
 
 export default function DashboardShell() {
-  const router = useRouter();
-
   return (
-    <main className="min-h-screen bg-background">
+    <main className="min-h-screen bg-[#f7f7f8] text-[#18181b]">
       <div className="flex min-h-screen">
-        {/* SIDEBAR */}
-        <aside className="hidden w-64 shrink-0 border-r border-border bg-card md:flex md:flex-col">
-          <div className="flex h-16 items-center border-b border-border px-5">
-            <div className="flex items-center gap-2">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-foreground text-background">
-                <Sparkles className="h-4 w-4" />
+        {/* Sidebar */}
+        <aside className="hidden w-64 shrink-0 border-r bg-white lg:flex lg:flex-col">
+          <div className="flex h-20 items-center border-b px-6">
+            <Link href="/" className="flex items-center gap-3">
+              <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-black text-white">
+                <Sparkles className="h-5 w-5" />
               </div>
 
               <div>
-                <p className="text-sm font-semibold">Hoichoi</p>
-
-                <p className="text-[10px] uppercase tracking-wider text-muted-foreground">
-                  AI Content Studio
-                </p>
+                <p className="text-sm font-bold tracking-tight">Hoichoi AI</p>
+                <p className="text-xs text-zinc-500">Content Studio</p>
               </div>
-            </div>
+            </Link>
           </div>
 
-          <nav className="flex-1 space-y-1 p-3">
-            {navigation.map((item) => {
+          <nav className="flex-1 space-y-1 p-4">
+            {navItems.map((item) => {
               const Icon = item.icon;
 
               return (
-                <button
-                  key={item.label}
-                  onClick={() => router.push(item.route)}
-                  className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground"
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  className="group flex items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-zinc-600 transition hover:bg-zinc-100 hover:text-zinc-950"
                 >
                   <Icon className="h-4 w-4" />
 
                   <span>{item.label}</span>
-                </button>
+
+                  <ChevronRight className="ml-auto h-4 w-4 opacity-0 transition group-hover:opacity-100" />
+                </Link>
               );
             })}
           </nav>
 
-          <div className="border-t border-border p-3">
-            <button className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-muted-foreground transition hover:bg-muted hover:text-foreground">
-              <Settings className="h-4 w-4" />
-              Settings
-            </button>
+          <div className="border-t p-4">
+            <div className="rounded-2xl bg-zinc-950 p-4 text-white">
+              <div className="mb-3 flex h-8 w-8 items-center justify-center rounded-lg bg-white/10">
+                <Sparkles className="h-4 w-4" />
+              </div>
+
+              <p className="text-sm font-semibold">AI Content Engine</p>
+
+              <p className="mt-1 text-xs leading-5 text-zinc-400">
+                Generate, publish and analyze your content from one place.
+              </p>
+            </div>
           </div>
         </aside>
 
-        {/* MAIN */}
-        <div className="flex min-w-0 flex-1 flex-col">
-          {/* TOP BAR */}
-          <header className="flex h-16 items-center justify-between border-b border-border px-5 md:px-8">
-            <div>
-              <p className="text-xs text-muted-foreground">
-                Content Operations
-              </p>
+        {/* Main */}
+        <section className="min-w-0 flex-1">
+          {/* Mobile header */}
+          <header className="flex h-16 items-center justify-between border-b bg-white px-5 lg:hidden">
+            <Link href="/" className="flex items-center gap-2">
+              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-black text-white">
+                <Sparkles className="h-4 w-4" />
+              </div>
 
-              <h1 className="text-sm font-semibold">Command Center</h1>
-            </div>
+              <span className="text-sm font-bold">Hoichoi AI</span>
+            </Link>
 
-            <button
-              onClick={() => router.push("/create")}
-              className="inline-flex h-9 items-center gap-2 rounded-lg bg-foreground px-3 text-sm font-medium text-background transition hover:opacity-90"
+            <Link
+              href="/report"
+              className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium"
             >
-              <Plus className="h-4 w-4" />
-              Create
-            </button>
+              <FileText className="h-4 w-4" />
+              Report
+            </Link>
           </header>
 
-          <div className="flex-1 p-5 md:p-8">
-            {/* HERO */}
-            <section className="rounded-2xl border border-border bg-card p-6 md:p-8">
-              <div className="max-w-3xl">
-                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-border px-3 py-1.5 text-xs text-muted-foreground">
-                  <Activity className="h-3.5 w-3.5" />
-                  AI-powered content operations
+          <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:px-10">
+            {/* Hero */}
+            <div className="flex flex-col gap-5 rounded-3xl bg-zinc-950 p-7 text-white sm:p-9 lg:flex-row lg:items-end lg:justify-between">
+              <div className="max-w-2xl">
+                <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-zinc-300">
+                  <Sparkles className="h-3.5 w-3.5" />
+                  AI Content Command Center
                 </div>
 
-                <h2 className="text-3xl font-semibold tracking-tight md:text-4xl">
-                  Turn one brief into a multi-platform campaign.
-                </h2>
+                <h1 className="text-3xl font-bold tracking-tight sm:text-4xl">
+                  Create. Publish. Learn.
+                </h1>
 
-                <p className="mt-4 max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Generate platform-specific creative, approve it, schedule mock
-                  channel publishing, and analyze performance from one command
-                  center.
+                <p className="mt-3 max-w-xl text-sm leading-6 text-zinc-400 sm:text-base">
+                  Turn one campaign brief into platform-specific content,
+                  scheduled posts, performance analytics and actionable AI
+                  insights.
                 </p>
-
-                <div className="mt-6 flex flex-wrap gap-3">
-                  <button
-                    onClick={() => router.push("/create")}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-foreground px-4 text-sm font-medium text-background"
-                  >
-                    <Sparkles className="h-4 w-4" />
-                    Create campaign
-                  </button>
-
-                  <button
-                    onClick={() => router.push("/analytics")}
-                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-border bg-background px-4 text-sm font-medium transition hover:bg-muted"
-                  >
-                    <BarChart3 className="h-4 w-4" />
-                    View analytics
-                  </button>
-                </div>
               </div>
-            </section>
 
-            {/* STATS */}
-            <section className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-              <DashboardStat
-                icon={<FileText className="h-4 w-4" />}
-                label="Campaigns"
-                value="12"
+              <div className="flex flex-wrap gap-3">
+                <Link
+                  href="/create"
+                  className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-3 text-sm font-semibold text-black transition hover:bg-zinc-200"
+                >
+                  <Plus className="h-4 w-4" />
+                  Create campaign
+                </Link>
+
+                <Link
+                  href="/report"
+                  className="inline-flex items-center gap-2 rounded-xl border border-white/15 bg-white/5 px-4 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+                >
+                  <FileText className="h-4 w-4" />
+                  View AI report
+                </Link>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard
+                title="AI Studio"
+                value="Active"
+                description="Generate platform-specific content"
+                icon={<BrainCircuit className="h-5 w-5" />}
               />
 
-              <DashboardStat
-                icon={<Send className="h-4 w-4" />}
-                label="Published Posts"
-                value="28"
+              <StatCard
+                title="Publisher"
+                value="Ready"
+                description="Review and schedule approved posts"
+                icon={<Megaphone className="h-5 w-5" />}
               />
 
-              <DashboardStat
-                icon={<CalendarDays className="h-4 w-4" />}
-                label="Scheduled"
-                value="07"
+              <StatCard
+                title="Analytics"
+                value="Live"
+                description="Track cross-platform performance"
+                icon={<BarChart3 className="h-5 w-5" />}
               />
 
-              <DashboardStat
-                icon={<BarChart3 className="h-4 w-4" />}
-                label="Avg. Engagement"
-                value="6.8%"
+              <StatCard
+                title="AI Report"
+                value="Ready"
+                description="Turn post metrics into next actions"
+                icon={<FileText className="h-5 w-5" />}
               />
-            </section>
+            </div>
 
-            {/* CONTENT GRID */}
-            <section className="mt-6 grid gap-6 lg:grid-cols-[1fr_360px]">
-              {/* RECENT CONTENT */}
-              <div className="rounded-2xl border border-border bg-card p-5">
-                <div className="mb-5 flex items-center justify-between">
+            {/* Workflow */}
+            <div className="mt-8 grid gap-6 lg:grid-cols-[1.5fr_1fr]">
+              <section className="rounded-3xl border bg-white p-6">
+                <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-semibold">Recent content</p>
-
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      Latest campaign activity
+                    <p className="text-lg font-semibold">Content workflow</p>
+                    <p className="mt-1 text-sm text-zinc-500">
+                      Your complete campaign pipeline.
                     </p>
                   </div>
 
-                  <button
-                    onClick={() => router.push("/analytics")}
-                    className="inline-flex items-center gap-1 text-xs text-muted-foreground transition hover:text-foreground"
-                  >
-                    Analytics
-                    <ChevronRight className="h-3 w-3" />
-                  </button>
+                  <Sparkles className="h-5 w-5 text-zinc-400" />
                 </div>
 
-                <div className="space-y-2">
-                  {recentContent.map((item) => (
-                    <div
-                      key={`${item.title}-${item.platform}`}
-                      className="flex items-center justify-between rounded-xl border border-border p-4"
-                    >
-                      <div>
-                        <p className="text-sm font-medium">{item.title}</p>
+                <div className="mt-6 space-y-3">
+                  <WorkflowItem
+                    number="01"
+                    title="Create brief"
+                    description="Define campaign goal, language and platforms."
+                    href="/create"
+                  />
 
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {item.platform} · {item.time}
-                        </p>
-                      </div>
+                  <WorkflowItem
+                    number="02"
+                    title="Generate with AI"
+                    description="Create platform-native visuals and copy."
+                    href="/studio"
+                  />
 
-                      <span className="rounded-full border border-border px-2.5 py-1 text-[10px] font-medium">
-                        {item.status}
-                      </span>
-                    </div>
-                  ))}
+                  <WorkflowItem
+                    number="03"
+                    title="Approve & publish"
+                    description="Validate content and schedule posts."
+                    href="/publish"
+                  />
+
+                  <WorkflowItem
+                    number="04"
+                    title="Analyze performance"
+                    description="Compare post performance across channels."
+                    href="/analytics"
+                  />
+
+                  <WorkflowItem
+                    number="05"
+                    title="Generate AI report"
+                    description="Use evidence-backed insights to guide the next brief."
+                    href="/report"
+                  />
                 </div>
-              </div>
+              </section>
 
-              {/* AI ASSISTANT */}
-              <div className="rounded-2xl border border-border bg-card p-5">
-                <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted">
-                  <Sparkles className="h-4 w-4" />
+              {/* AI Report card */}
+              <section className="rounded-3xl border bg-white p-6">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-zinc-950 text-white">
+                  <FileText className="h-5 w-5" />
                 </div>
 
-                <p className="mt-4 text-sm font-semibold">AI assistant</p>
+                <h2 className="mt-5 text-xl font-semibold">Weekly AI Report</h2>
 
-                <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                  Turn a campaign idea into platform-specific content, schedule
-                  it, and inspect performance signals.
+                <p className="mt-2 text-sm leading-6 text-zinc-500">
+                  Convert your campaign analytics into evidence-backed insights,
+                  recommendations and a direction for the next campaign.
                 </p>
 
-                <button
-                  onClick={() => router.push("/create")}
-                  className="mt-5 inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-border text-xs font-medium transition hover:bg-muted"
+                <div className="mt-6 space-y-3">
+                  <ReportFeature text="Post-level evidence with Post IDs" />
+                  <ReportFeature text="Cross-platform performance insights" />
+                  <ReportFeature text="Actionable recommendations" />
+                  <ReportFeature text="Next campaign brief direction" />
+                </div>
+
+                <Link
+                  href="/report"
+                  className="mt-6 flex w-full items-center justify-center gap-2 rounded-xl bg-black px-4 py-3 text-sm font-semibold text-white transition hover:bg-zinc-800"
                 >
-                  Start a brief
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </button>
-              </div>
-            </section>
+                  Open AI Report
+                  <ChevronRight className="h-4 w-4" />
+                </Link>
+              </section>
+            </div>
 
-            {/* WORKFLOW */}
-            <section className="mt-6 rounded-2xl border border-border bg-card p-5">
-              <div className="mb-5">
-                <p className="text-sm font-semibold">Campaign workflow</p>
-
-                <p className="mt-1 text-xs text-muted-foreground">
-                  From brief to measurable platform output
+            {/* Quick actions */}
+            <section className="mt-8 rounded-3xl border bg-white p-6">
+              <div>
+                <p className="text-lg font-semibold">Quick actions</p>
+                <p className="mt-1 text-sm text-zinc-500">
+                  Jump directly into the campaign workflow.
                 </p>
               </div>
 
-              <div className="grid gap-3 md:grid-cols-5">
-                {[
-                  ["01", "Brief", FileText],
-                  ["02", "Generate", Sparkles],
-                  ["03", "Approve", CheckIcon],
-                  ["04", "Publish", Send],
-                  ["05", "Analyze", BarChart3],
-                ].map(([number, label, Icon]) => {
-                  const WorkflowIcon = Icon as React.ComponentType<{
-                    className?: string;
-                  }>;
+              <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                <QuickAction
+                  href="/create"
+                  icon={<Plus className="h-5 w-5" />}
+                  title="Create"
+                  description="Start a campaign"
+                />
 
-                  return (
-                    <div
-                      key={String(number)}
-                      className="rounded-xl border border-border p-4"
-                    >
-                      <div className="flex items-center justify-between">
-                        <span className="text-[10px] font-mono text-muted-foreground">
-                          {String(number)}
-                        </span>
+                <QuickAction
+                  href="/studio"
+                  icon={<BrainCircuit className="h-5 w-5" />}
+                  title="AI Studio"
+                  description="Generate content"
+                />
 
-                        <WorkflowIcon className="h-4 w-4" />
-                      </div>
+                <QuickAction
+                  href="/publish"
+                  icon={<Megaphone className="h-5 w-5" />}
+                  title="Publisher"
+                  description="Schedule posts"
+                />
 
-                      <p className="mt-4 text-sm font-medium">
-                        {String(label)}
-                      </p>
-                    </div>
-                  );
-                })}
+                <QuickAction
+                  href="/analytics"
+                  icon={<BarChart3 className="h-5 w-5" />}
+                  title="Analytics"
+                  description="View metrics"
+                />
+
+                <QuickAction
+                  href="/report"
+                  icon={<FileText className="h-5 w-5" />}
+                  title="AI Report"
+                  description="Generate insights"
+                />
               </div>
             </section>
           </div>
-        </div>
+        </section>
       </div>
     </main>
   );
 }
 
-function DashboardStat({
-  icon,
-  label,
+function StatCard({
+  title,
   value,
+  description,
+  icon,
 }: {
-  icon: React.ReactNode;
-  label: string;
+  title: string;
   value: string;
+  description: string;
+  icon: React.ReactNode;
 }) {
   return (
-    <div className="rounded-2xl border border-border bg-card p-5">
-      <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-muted">
-        {icon}
+    <div className="rounded-2xl border bg-white p-5">
+      <div className="flex items-start justify-between">
+        <div>
+          <p className="text-sm font-medium text-zinc-500">{title}</p>
+          <p className="mt-2 text-2xl font-bold tracking-tight">{value}</p>
+        </div>
+
+        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-100">
+          {icon}
+        </div>
       </div>
 
-      <p className="mt-4 text-xs text-muted-foreground">{label}</p>
-
-      <p className="mt-1 text-2xl font-semibold">{value}</p>
+      <p className="mt-3 text-xs leading-5 text-zinc-500">{description}</p>
     </div>
   );
 }
 
-function CheckIcon({ className }: { className?: string }) {
-  return <CheckCircle2 className={className} />;
+function WorkflowItem({
+  number,
+  title,
+  description,
+  href,
+}: {
+  number: string;
+  title: string;
+  description: string;
+  href: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group flex items-center gap-4 rounded-2xl border p-4 transition hover:border-zinc-300 hover:bg-zinc-50"
+    >
+      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-zinc-100 text-xs font-bold">
+        {number}
+      </div>
+
+      <div className="min-w-0">
+        <p className="text-sm font-semibold">{title}</p>
+        <p className="mt-1 text-xs leading-5 text-zinc-500">{description}</p>
+      </div>
+
+      <ChevronRight className="ml-auto h-4 w-4 shrink-0 text-zinc-400 transition group-hover:translate-x-0.5" />
+    </Link>
+  );
+}
+
+function ReportFeature({ text }: { text: string }) {
+  return (
+    <div className="flex items-center gap-3 text-sm text-zinc-600">
+      <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-zinc-100">
+        <span className="h-1.5 w-1.5 rounded-full bg-zinc-900" />
+      </div>
+
+      <span>{text}</span>
+    </div>
+  );
+}
+
+function QuickAction({
+  href,
+  icon,
+  title,
+  description,
+}: {
+  href: string;
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+}) {
+  return (
+    <Link
+      href={href}
+      className="group rounded-2xl border p-4 transition hover:border-zinc-300 hover:bg-zinc-50"
+    >
+      <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-zinc-100">
+        {icon}
+      </div>
+
+      <p className="mt-4 text-sm font-semibold">{title}</p>
+
+      <p className="mt-1 text-xs text-zinc-500">{description}</p>
+    </Link>
+  );
 }
