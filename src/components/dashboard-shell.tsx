@@ -29,13 +29,13 @@ type Campaign = {
   language: string;
   contentType: string;
   platforms: Platform[];
-  createdAt: string;
+  createdAt?: string;
 };
 
 type ScheduledPost = {
   id: string;
   campaignId?: string;
-  campaignTitle: string;
+  campaignTitle?: string;
   platform: Platform;
   headline: string;
   scheduledAt: string;
@@ -64,15 +64,20 @@ type AnalyticsRecord = {
 
 type WeeklyReport = {
   campaignId?: string;
+  generatedAt?: string;
   keyInsights?: Array<{
     insight?: string;
     evidence?: string;
+    evidencePostIds?: string[];
     metrics?: Record<string, string | number>;
   }>;
-  recommendations?: Array<{
-    recommendation?: string;
-    rationale?: string;
-  }>;
+  recommendations?: Array<
+    | {
+        recommendation?: string;
+        rationale?: string;
+      }
+    | string
+  >;
   nextBrief?: {
     direction?: string;
     objective?: string;
@@ -91,29 +96,149 @@ const navItems = [
   { label: "AI Report", href: "/report", icon: FileText },
 ];
 
-const platformMeta: Record<Platform, { label: string; className: string }> = {
-  Instagram: {
-    label: "Instagram",
-    className: "bg-pink-50 text-pink-700 border-pink-100",
-  },
-  YouTube: {
-    label: "YouTube",
-    className: "bg-red-50 text-red-700 border-red-100",
-  },
-  Facebook: {
-    label: "Facebook",
-    className: "bg-blue-50 text-blue-700 border-blue-100",
-  },
+const platformMeta: Record<Platform, string> = {
+  Instagram: "bg-pink-50 text-pink-700 border-pink-100",
+  YouTube: "bg-red-50 text-red-700 border-red-100",
+  Facebook: "bg-blue-50 text-blue-700 border-blue-100",
 };
 
+function parseMetrics(value: string) {
+  try {
+    return JSON.parse(value) as Record<string, number>;
+  } catch {
+    return {};
+  }
+}
+
+function getMetrics(record: AnalyticsRecord) {
+  return typeof record.metrics === "string"
+    ? parseMetrics(record.metrics)
+    : (record.metrics ?? {});
+}
+
+function formatNumber(value: number) {
+  if (!Number.isFinite(value)) return "0";
+
+  return new Intl.NumberFormat("en-IN", {
+    notation: value >= 1000 ? "compact" : "standard",
+    maximumFractionDigits: 1,
+  }).format(value);
+}
+
+function formatDateTime(value?: string) {
+  if (!value) return "Unknown time";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) return value;
+
+  return date.toLocaleString("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
+}
+
+function getGeneratedState() {
+  if (typeof window === "undefined") return false;
+
+  const raw = localStorage.getItem("hoichoi-generated-contents");
+
+  if (!raw) return false;
+
+  if (raw === "true") return true;
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.length > 0 : Boolean(parsed);
+  } catch {
+    return Boolean(raw);
+  }
+}
+
+function getApprovedState() {
+  if (typeof window === "undefined") return false;
+  return localStorage.getItem("hoichoi-content-approved") === "true";
+}
+
 export default function DashboardShell() {
+  /*
+   * IMPORTANT:
+   * localStorage, Intl date formatting and client-only state must not
+   * participate in the first render. Otherwise the server HTML can differ
+   * from the browser HTML and trigger a React hydration mismatch.
+   */
+  const [mounted, setMounted] = useState(false);
+
   const [campaign, setCampaign] = useState<Campaign | null>(null);
   const [posts, setPosts] = useState<ScheduledPost[]>([]);
   const [analytics, setAnalytics] = useState<AnalyticsRecord[]>([]);
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
 
+  function loadDashboardState() {
+    try {
+      const briefRaw = localStorage.getItem("hoichoi-content-brief");
+      const postsRaw = localStorage.getItem("hoichoi-scheduled-posts");
+      const analyticsRaw = localStorage.getItem("hoichoi-analytics");
+
+      /*
+       * Prefer the campaign-aware report archive. Fall back to the legacy
+       * single-report key so existing demo data continues to work.
+       */
+      const reportsRaw = localStorage.getItem("hoichoi-weekly-reports");
+      const legacyReportRaw = localStorage.getItem("hoichoi-weekly-report");
+
+      const parsedCampaign = briefRaw
+        ? (JSON.parse(briefRaw) as Campaign)
+        : null;
+
+      const parsedPosts = postsRaw ? JSON.parse(postsRaw) : [];
+      const parsedAnalytics = analyticsRaw ? JSON.parse(analyticsRaw) : [];
+
+      let parsedReports: WeeklyReport[] = [];
+
+      if (reportsRaw) {
+        const candidate = JSON.parse(reportsRaw);
+        if (Array.isArray(candidate)) {
+          parsedReports = candidate;
+        }
+      }
+
+      if (legacyReportRaw) {
+        const legacy = JSON.parse(legacyReportRaw) as WeeklyReport;
+
+        const alreadyPresent = parsedReports.some(
+          (item) =>
+            item.campaignId &&
+            legacy.campaignId &&
+            item.campaignId === legacy.campaignId,
+        );
+
+        if (!alreadyPresent) {
+          parsedReports.push(legacy);
+        }
+      }
+
+      const matchingReport = parsedCampaign?.campaignId
+        ? parsedReports.find(
+            (item) => item.campaignId === parsedCampaign.campaignId,
+          )
+        : parsedReports[0];
+
+      setCampaign(parsedCampaign);
+      setPosts(Array.isArray(parsedPosts) ? parsedPosts : []);
+      setAnalytics(Array.isArray(parsedAnalytics) ? parsedAnalytics : []);
+      setReport(matchingReport ?? null);
+    } catch {
+      setCampaign(null);
+      setPosts([]);
+      setAnalytics([]);
+      setReport(null);
+    }
+  }
+
   useEffect(() => {
+    setMounted(true);
     loadDashboardState();
 
     const handleStorage = () => loadDashboardState();
@@ -131,40 +256,13 @@ export default function DashboardShell() {
     };
   }, [refreshKey]);
 
-  function loadDashboardState() {
-    try {
-      const briefRaw = localStorage.getItem("hoichoi-content-brief");
-      const postsRaw = localStorage.getItem("hoichoi-scheduled-posts");
-      const analyticsRaw = localStorage.getItem("hoichoi-analytics");
-      const reportRaw = localStorage.getItem("hoichoi-weekly-report");
-
-      const parsedCampaign = briefRaw
-        ? (JSON.parse(briefRaw) as Campaign)
-        : null;
-
-      setCampaign(parsedCampaign);
-
-      const parsedPosts = postsRaw ? JSON.parse(postsRaw) : [];
-      const parsedAnalytics = analyticsRaw ? JSON.parse(analyticsRaw) : [];
-      const parsedReport = reportRaw ? JSON.parse(reportRaw) : null;
-
-      setPosts(Array.isArray(parsedPosts) ? parsedPosts : []);
-      setAnalytics(Array.isArray(parsedAnalytics) ? parsedAnalytics : []);
-      setReport(parsedReport);
-    } catch {
-      setCampaign(null);
-      setPosts([]);
-      setAnalytics([]);
-      setReport(null);
-    }
-  }
-
   const campaignPosts = useMemo(() => {
     if (!campaign) return [];
 
     return posts.filter((post) =>
       campaign.campaignId
-        ? post.campaignId === campaign.campaignId
+        ? post.campaignId === campaign.campaignId ||
+          (!post.campaignId && post.campaignTitle === campaign.title)
         : post.campaignTitle === campaign.title,
     );
   }, [campaign, posts]);
@@ -189,11 +287,10 @@ export default function DashboardShell() {
     });
   }, [analytics, campaign, campaignPostIds]);
 
-  const generated = readBooleanStorage("hoichoi-generated-contents");
-  const approved = readBooleanStorage("hoichoi-content-approved");
+  const generated = mounted ? getGeneratedState() : false;
+  const approved = mounted ? getApprovedState() : false;
 
   const status = useMemo(() => {
-    const hasPosts = campaignPosts.length > 0;
     const hasPublished = campaignPosts.some(
       (post) => post.status === "published",
     );
@@ -202,18 +299,18 @@ export default function DashboardShell() {
     );
     const hasAnalytics = campaignAnalytics.length > 0;
     const hasReport =
-      !!report &&
-      (!campaign?.campaignId || report.campaignId === campaign.campaignId);
+      Boolean(report) &&
+      (!campaign?.campaignId || report?.campaignId === campaign.campaignId);
 
     return {
-      brief: !!campaign,
+      brief: Boolean(campaign),
       generated,
       approved,
-      scheduled: hasScheduled,
       published: hasPublished,
+      scheduled: hasScheduled,
       analytics: hasAnalytics,
       report: hasReport,
-      hasPosts,
+      hasPosts: campaignPosts.length > 0,
     };
   }, [campaign, campaignAnalytics, campaignPosts, generated, approved, report]);
 
@@ -224,27 +321,28 @@ export default function DashboardShell() {
     let views = 0;
 
     for (const record of campaignAnalytics) {
-      const metrics =
-        typeof record.metrics === "string"
-          ? parseMetrics(record.metrics)
-          : record.metrics;
+      const metrics = getMetrics(record);
 
-      reach += Number(metrics?.reach ?? 0);
-      impressions += Number(metrics?.impressions ?? 0);
-      engagement += Number(metrics?.engagement ?? 0);
-      views += Number(metrics?.views ?? 0);
+      reach += Number(metrics.reach ?? 0);
+      impressions += Number(metrics.impressions ?? 0);
+      engagement += Number(metrics.engagement ?? 0);
+      views += Number(metrics.views ?? 0);
     }
 
-    const engagementRate =
-      reach > 0 ? Number(((engagement / reach) * 100).toFixed(2)) : 0;
-
-    return { reach, impressions, engagement, views, engagementRate };
+    return {
+      reach,
+      impressions,
+      engagement,
+      views,
+      engagementRate:
+        reach > 0 ? Number(((engagement / reach) * 100).toFixed(2)) : 0,
+    };
   }, [campaignAnalytics]);
 
   const platformRows = useMemo(() => {
-    const rows: Platform[] = ["Instagram", "YouTube", "Facebook"];
+    const platforms: Platform[] = ["Instagram", "YouTube", "Facebook"];
 
-    return rows.map((platform) => {
+    return platforms.map((platform) => {
       const platformPosts = campaignPosts.filter(
         (post) => post.platform === platform,
       );
@@ -258,14 +356,10 @@ export default function DashboardShell() {
       let views = 0;
 
       for (const record of platformAnalytics) {
-        const metrics =
-          typeof record.metrics === "string"
-            ? parseMetrics(record.metrics)
-            : record.metrics;
-
-        reach += Number(metrics?.reach ?? 0);
-        engagement += Number(metrics?.engagement ?? 0);
-        views += Number(metrics?.views ?? 0);
+        const metrics = getMetrics(record);
+        reach += Number(metrics.reach ?? 0);
+        engagement += Number(metrics.engagement ?? 0);
+        views += Number(metrics.views ?? 0);
       }
 
       return {
@@ -327,7 +421,7 @@ export default function DashboardShell() {
       return {
         title: "Generate campaign analytics",
         description:
-          "Use the Analytics page to create the mock performance dataset for the published campaign.",
+          "Use Analytics to create the mock performance dataset for the published campaign.",
         href: "/analytics",
         action: "Open Analytics",
       };
@@ -357,7 +451,7 @@ export default function DashboardShell() {
       id: string;
       title: string;
       description: string;
-      date: string;
+      date?: string;
       icon: React.ReactNode;
     }> = [];
 
@@ -396,6 +490,10 @@ export default function DashboardShell() {
         });
       });
 
+    /*
+     * Do not use new Date().toISOString() during render.
+     * That creates different HTML on the server and client.
+     */
     if (status.report && report) {
       items.push({
         id: "report",
@@ -403,18 +501,35 @@ export default function DashboardShell() {
         description:
           report.keyInsights?.[0]?.insight ??
           "Campaign performance has been converted into AI insights.",
-        date: new Date().toISOString(),
+        date: report.generatedAt,
         icon: <Sparkles className="h-4 w-4" />,
       });
     }
 
     return items
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      .sort(
+        (a, b) =>
+          new Date(b.date ?? 0).getTime() - new Date(a.date ?? 0).getTime(),
+      )
       .slice(0, 5);
   }, [campaign, campaignPosts, report, status.report]);
 
   const insightPreview = report?.keyInsights?.[0];
+
   const recommendationPreview = report?.recommendations?.[0];
+
+  const recommendationText =
+    typeof recommendationPreview === "string"
+      ? recommendationPreview
+      : recommendationPreview?.recommendation;
+
+  /*
+   * Server and the first browser render are intentionally identical.
+   * The real localStorage-backed dashboard is mounted immediately after.
+   */
+  if (!mounted) {
+    return <DashboardSkeleton />;
+  }
 
   return (
     <main className="min-h-screen bg-[#f7f7f8] text-[#18181b]">
@@ -633,7 +748,7 @@ export default function DashboardShell() {
               </section>
             </div>
 
-            <div className="mt-8 grid gap-6 lg:grid-cols-[1fr_1fr]">
+            <div className="mt-8 grid gap-6 lg:grid-cols-2">
               <section className="rounded-3xl border bg-white p-6">
                 <div className="flex items-center justify-between">
                   <div>
@@ -667,7 +782,7 @@ export default function DashboardShell() {
                               {row.platform}
                             </p>
                             <span
-                              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${platformMeta[row.platform].className}`}
+                              className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${platformMeta[row.platform]}`}
                             >
                               {row.postCount === 0
                                 ? "Not published"
@@ -679,8 +794,8 @@ export default function DashboardShell() {
 
                           <p className="mt-1 text-xs text-zinc-500">
                             {row.postCount} post
-                            {row.postCount === 1 ? "" : "s"} Â·{" "}
-                            {formatNumber(row.reach)} reach Â·{" "}
+                            {row.postCount === 1 ? "" : "s"} ·{" "}
+                            {formatNumber(row.reach)} reach ·{" "}
                             {formatNumber(row.views)} views
                           </p>
                         </div>
@@ -713,7 +828,7 @@ export default function DashboardShell() {
                     <div className="mt-5 rounded-2xl bg-zinc-50 p-5">
                       <p className="text-sm font-semibold">Key insight</p>
                       <p className="mt-2 text-sm leading-6 text-zinc-600">
-                        {insightPreview.insight ??
+                        {insightPreview.insight ||
                           "The AI report contains a campaign performance insight."}
                       </p>
 
@@ -722,13 +837,22 @@ export default function DashboardShell() {
                           Evidence: {insightPreview.evidence}
                         </p>
                       )}
+
+                      {!insightPreview.evidence &&
+                        insightPreview.evidencePostIds &&
+                        insightPreview.evidencePostIds.length > 0 && (
+                          <p className="mt-3 text-xs leading-5 text-zinc-500">
+                            Evidence:{" "}
+                            {insightPreview.evidencePostIds.join(", ")}
+                          </p>
+                        )}
                     </div>
 
-                    {recommendationPreview?.recommendation && (
+                    {recommendationText && (
                       <div className="mt-3 rounded-2xl border p-5">
                         <p className="text-sm font-semibold">Recommendation</p>
                         <p className="mt-2 text-sm leading-6 text-zinc-600">
-                          {recommendationPreview.recommendation}
+                          {recommendationText}
                         </p>
                       </div>
                     )}
@@ -813,7 +937,7 @@ export default function DashboardShell() {
                     Closed-loop content intelligence
                   </p>
                   <h2 className="mt-2 text-xl font-semibold">
-                    Brief â†’ Create â†’ Publish â†’ Learn â†’ Brief
+                    Brief → Create → Publish → Learn → Brief
                   </h2>
                   <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
                     Every campaign feeds performance evidence into the next
@@ -837,6 +961,33 @@ export default function DashboardShell() {
   );
 }
 
+function DashboardSkeleton() {
+  return (
+    <main className="min-h-screen bg-[#f7f7f8] text-[#18181b]">
+      <div className="flex min-h-screen">
+        <aside className="hidden w-64 shrink-0 border-r bg-white lg:block" />
+        <section className="min-w-0 flex-1">
+          <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:px-10">
+            <div className="h-64 animate-pulse rounded-3xl bg-zinc-900" />
+            <div className="mt-6 grid gap-3 sm:grid-cols-2 xl:grid-cols-7">
+              {Array.from({ length: 7 }).map((_, index) => (
+                <div
+                  key={index}
+                  className="h-24 animate-pulse rounded-2xl border bg-white"
+                />
+              ))}
+            </div>
+            <div className="mt-8 grid gap-6 lg:grid-cols-2">
+              <div className="h-80 animate-pulse rounded-3xl border bg-white" />
+              <div className="h-80 animate-pulse rounded-3xl border bg-white" />
+            </div>
+          </div>
+        </section>
+      </div>
+    </main>
+  );
+}
+
 function PipelineCard({ label, done }: { label: string; done: boolean }) {
   return (
     <div
@@ -852,7 +1003,6 @@ function PipelineCard({ label, done }: { label: string; done: boolean }) {
         )}
         <p className="text-xs font-semibold">{label}</p>
       </div>
-
       <p className="mt-2 text-[10px] text-zinc-500">
         {done ? "Complete" : "Pending"}
       </p>
@@ -903,11 +1053,11 @@ function PlatformRow({
         <div className="flex flex-wrap items-center gap-2">
           <p className="text-sm font-semibold">{platform}</p>
           <span
-            className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${platformMeta[platform].className}`}
+            className={`rounded-full border px-2 py-0.5 text-[10px] font-medium ${platformMeta[platform]}`}
           >
             {postCount === 0
               ? "No posts"
-              : `${published} published Â· ${scheduled} scheduled`}
+              : `${published} published · ${scheduled} scheduled`}
           </span>
         </div>
       </div>
@@ -928,39 +1078,4 @@ function PlatformRow({
       </div>
     </div>
   );
-}
-
-function readBooleanStorage(key: string) {
-  if (typeof window === "undefined") return false;
-  return localStorage.getItem(key) === "true";
-}
-
-function parseMetrics(value: string) {
-  try {
-    return JSON.parse(value) as Record<string, number>;
-  } catch {
-    return {};
-  }
-}
-
-function formatNumber(value: number) {
-  if (!Number.isFinite(value)) return "0";
-
-  return new Intl.NumberFormat("en-IN", {
-    notation: value >= 1000 ? "compact" : "standard",
-    maximumFractionDigits: 1,
-  }).format(value);
-}
-
-function formatDateTime(value: string) {
-  const date = new Date(value);
-
-  if (Number.isNaN(date.getTime())) {
-    return value;
-  }
-
-  return date.toLocaleString("en-IN", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
 }
