@@ -9,6 +9,7 @@ import {
   Clock3,
   FileText,
   LayoutDashboard,
+  LogOut,
   Megaphone,
   Plus,
   RefreshCw,
@@ -18,6 +19,7 @@ import {
   Video,
   XCircle,
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 type Platform = "Instagram" | "YouTube" | "Facebook";
@@ -174,6 +176,24 @@ export default function DashboardShell() {
   const [analytics, setAnalytics] = useState<AnalyticsRecord[]>([]);
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const router = useRouter();
+
+  async function handleLogout() {
+    if (loggingOut) return;
+
+    setLoggingOut(true);
+
+    try {
+      await fetch("/api/auth/logout", {
+        method: "POST",
+        cache: "no-store",
+      });
+    } finally {
+      router.replace("/login");
+      router.refresh();
+    }
+  }
 
   function loadDashboardState() {
     try {
@@ -575,6 +595,16 @@ export default function DashboardShell() {
                 Create, publish, analyze and learn from every campaign.
               </p>
             </div>
+
+            <button
+              type="button"
+              onClick={handleLogout}
+              disabled={loggingOut}
+              className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border px-3 py-2.5 text-sm font-medium text-zinc-700 transition hover:bg-zinc-50 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              <LogOut className="h-4 w-4" />
+              {loggingOut ? "Logging out..." : "Logout"}
+            </button>
           </div>
         </aside>
 
@@ -587,13 +617,25 @@ export default function DashboardShell() {
               <span className="text-sm font-bold">Hoichoi AI</span>
             </Link>
 
-            <Link
-              href="/report"
-              className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium"
-            >
-              <FileText className="h-4 w-4" />
-              Report
-            </Link>
+            <div className="flex items-center gap-2">
+              <Link
+                href="/report"
+                className="flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium"
+              >
+                <FileText className="h-4 w-4" />
+                Report
+              </Link>
+
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="inline-flex items-center gap-2 rounded-lg border px-3 py-2 text-xs font-medium disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <LogOut className="h-4 w-4" />
+                {loggingOut ? "..." : "Logout"}
+              </button>
+            </div>
           </header>
 
           <div className="mx-auto max-w-7xl px-5 py-8 sm:px-8 lg:px-10">
